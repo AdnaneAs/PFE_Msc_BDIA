@@ -1,6 +1,55 @@
 const API_BASE_URL = 'http://localhost:8000';
 
 /**
+ * Helper function to handle API errors
+ * @param {Response} response - The fetch Response object
+ * @returns {Promise<Object>} The parsed JSON response if successful
+ * @throws {Error} With error details if the response was not successful
+ */
+const handleApiResponse = async (response) => {
+  if (!response.ok) {
+    let errorMessage = `HTTP error! Status: ${response.status}`;
+    try {
+      const errorData = await response.json();
+      if (errorData.detail) {
+        errorMessage = errorData.detail;
+      }
+    } catch (e) {
+      // If we can't parse the error as JSON, use the default message
+    }
+    throw new Error(errorMessage);
+  }
+  return await response.json();
+};
+
+/**
+ * Gets a list of available Ollama models
+ * @returns {Promise<Array<string>>} List of available model names
+ */
+export const getOllamaModels = async () => {
+  try {
+    // Query the Ollama API directly
+    const response = await fetch('http://localhost:11434/api/tags');
+    
+    if (response.ok) {
+      const data = await response.json();
+      if (data && data.models) {
+        // Extract model names from the response
+        return data.models.map(model => model.name);
+      }
+    }
+    
+    // Fallback to a backend endpoint if direct access fails
+    const backupResponse = await fetch(`${API_BASE_URL}/api/query/models`);
+    return await handleApiResponse(backupResponse);
+  } catch (error) {
+    console.error('Error fetching Ollama models:', error);
+    // Return a default model list in case of error
+    return ['llama3.2:latest'];
+  }
+};
+
+/**
  * Fetches the hello message from the backend API
  * @returns {Promise<Object>} The response data as a JSON object
  * @throws {Error} If the API call fails
@@ -8,12 +57,7 @@ const API_BASE_URL = 'http://localhost:8000';
 export const fetchHelloMessage = async () => {
   try {
     const response = await fetch(`${API_BASE_URL}/api/hello`);
-    
-    if (!response.ok) {
-      throw new Error(`HTTP error! Status: ${response.status}`);
-    }
-    
-    return await response.json();
+    return await handleApiResponse(response);
   } catch (error) {
     console.error('Error fetching hello message:', error);
     throw error;
@@ -31,17 +75,14 @@ export const uploadDocument = async (file) => {
     const formData = new FormData();
     formData.append('file', file);
     
+    console.log(`Uploading file: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
+    
     const response = await fetch(`${API_BASE_URL}/api/documents/upload`, {
       method: 'POST',
       body: formData,
     });
     
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || `HTTP error! Status: ${response.status}`);
-    }
-    
-    return await response.json();
+    return await handleApiResponse(response);
   } catch (error) {
     console.error('Error uploading document:', error);
     throw error;
@@ -59,17 +100,14 @@ export const uploadDocumentAsync = async (file) => {
     const formData = new FormData();
     formData.append('file', file);
     
+    console.log(`Starting async upload for: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
+    
     const response = await fetch(`${API_BASE_URL}/api/documents/upload/async`, {
       method: 'POST',
       body: formData,
     });
     
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || `HTTP error! Status: ${response.status}`);
-    }
-    
-    return await response.json();
+    return await handleApiResponse(response);
   } catch (error) {
     console.error('Error starting async document upload:', error);
     throw error;
@@ -84,14 +122,9 @@ export const uploadDocumentAsync = async (file) => {
  */
 export const getDocumentStatus = async (docId) => {
   try {
+    console.log(`Polling status for document: ${docId}`);
     const response = await fetch(`${API_BASE_URL}/api/documents/status/${docId}`);
-    
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || `HTTP error! Status: ${response.status}`);
-    }
-    
-    return await response.json();
+    return await handleApiResponse(response);
   } catch (error) {
     console.error('Error fetching document status:', error);
     throw error;
@@ -105,6 +138,7 @@ export const getDocumentStatus = async (docId) => {
  */
 export const streamDocumentStatus = (docId) => {
   try {
+    console.log(`Creating event source for document: ${docId}`);
     const eventSource = new EventSource(`${API_BASE_URL}/api/documents/status/stream/${docId}`);
     
     // Add error listener to handle connection issues
@@ -123,25 +157,29 @@ export const streamDocumentStatus = (docId) => {
 /**
  * Submits a query to the backend API
  * @param {string} question - The question to ask
+ * @param {Object} modelConfig - Configuration for the LLM model
  * @returns {Promise<Object>} The response data as a JSON object
  * @throws {Error} If the API call fails
  */
-export const submitQuery = async (question) => {
+export const submitQuery = async (question, modelConfig = {}) => {
   try {
+    console.log(`Submitting query: ${question}`);
+    console.log(`Using model config:`, modelConfig);
+    
     const response = await fetch(`${API_BASE_URL}/api/query`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify({ question }),
+      body: JSON.stringify({ 
+        question,
+        model_config: modelConfig
+      }),
     });
     
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || `HTTP error! Status: ${response.status}`);
-    }
-    
-    return await response.json();
+    const result = await handleApiResponse(response);
+    console.log(`Query response received, answer length: ${result.answer ? result.answer.length : 0}`);
+    return result;
   } catch (error) {
     console.error('Error submitting query:', error);
     throw error;
@@ -156,13 +194,7 @@ export const submitQuery = async (question) => {
 export const getLLMStatus = async () => {
   try {
     const response = await fetch(`${API_BASE_URL}/api/query/status`);
-    
-    if (!response.ok) {
-      const errorData = await response.json();
-      throw new Error(errorData.detail || `HTTP error! Status: ${response.status}`);
-    }
-    
-    return await response.json();
+    return await handleApiResponse(response);
   } catch (error) {
     console.error('Error fetching LLM status:', error);
     throw error;
@@ -172,13 +204,21 @@ export const getLLMStatus = async () => {
 /**
  * Creates an EventSource for streaming query responses
  * @param {string} question - The question to ask
+ * @param {Object} modelConfig - Configuration for the LLM model
  * @returns {EventSource} An EventSource object for streaming the response
  */
-export const streamQuery = (question) => {
+export const streamQuery = (question, modelConfig = {}) => {
   try {
-    // URL encode the question and add to the URL
+    console.log(`Setting up streaming for query: ${question}`);
+    console.log(`Using model config for streaming:`, modelConfig);
+    
+    // URL encode the question and model config
     const encodedQuestion = encodeURIComponent(question);
-    const eventSource = new EventSource(`${API_BASE_URL}/api/query/stream?question=${encodedQuestion}`);
+    const encodedConfig = encodeURIComponent(JSON.stringify(modelConfig));
+    
+    const eventSource = new EventSource(
+      `${API_BASE_URL}/api/query/stream?question=${encodedQuestion}&model_config=${encodedConfig}`
+    );
     
     // Add error handler for EventSource
     eventSource.onerror = (error) => {

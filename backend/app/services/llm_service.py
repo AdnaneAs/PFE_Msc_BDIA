@@ -1,15 +1,30 @@
 import os
 import json
 import time
+import logging
 import asyncio
 from typing import Dict, Any, List, Optional, AsyncIterator
 import requests
 import aiohttp
 from functools import lru_cache
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Placeholder for LLM API key and endpoints
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
+GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+
+# Default models
+DEFAULT_OLLAMA_MODEL = "llama3.2:latest"
+DEFAULT_OPENAI_MODEL = "gpt-3.5-turbo"
+DEFAULT_GEMINI_MODEL = "gemini-pro"
+
+logger.info(f"LLM Service initialized. OpenAI API configured: {OPENAI_API_KEY is not None}")
+logger.info(f"Gemini API configured: {GEMINI_API_KEY is not None}")
+logger.info(f"Ollama endpoint: {OLLAMA_ENDPOINT}")
 
 # Cache to store recent LLM responses
 query_cache = {}
@@ -51,13 +66,17 @@ Question:
 
 Answer:
 """
+    logger.info(f"Created prompt with {len(context_documents)} context documents")
+    logger.debug(f"Prompt first 100 chars: {prompt[:100]}...")
+    
     return prompt
 
 # Calculate a cache key based on question and context
-def get_cache_key(question: str, context_documents: List[str]) -> str:
-    """Generate a cache key from the question and a hash of the context"""
+def get_cache_key(question: str, context_documents: List[str], model_config: Dict[str, Any] = None) -> str:
+    """Generate a cache key from the question, context, and model config"""
     context_hash = hash(tuple(sorted(context_documents)))
-    return f"{question.strip().lower()}:{context_hash}"
+    model_hash = hash(str(model_config)) if model_config else 0
+    return f"{question.strip().lower()}:{context_hash}:{model_hash}"
 
 # Simple LRU cache for the Ollama client to avoid repeated calls for the same query
 @lru_cache(maxsize=10)
@@ -66,34 +85,42 @@ def get_cached_ollama_response(prompt_hash: str):
     # This is just a key for the cache, the actual query uses the real prompt
     return None
 
-def query_ollama_llm(prompt: str, model: str = "llama3") -> str:
+def query_ollama_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     """
     Query an Ollama LLM instance
     
     Args:
         prompt: The formatted prompt
-        model: The Ollama model to use
+        model_config: Configuration for the model
         
     Returns:
-        str: LLM response
+        tuple: (LLM response, model info)
     """
     global llm_status
     
+    # Get model from config or use default
+    model = DEFAULT_OLLAMA_MODEL
+    if model_config and 'model' in model_config:
+        model = model_config.get('model')
+    
     # Update status
     llm_status["is_processing"] = True
-    llm_status["last_model_used"] = model
+    llm_status["last_model_used"] = f"ollama/{model}"
     llm_status["last_query_time"] = time.time()
     llm_status["total_queries"] += 1
     
+    logger.info(f"Querying Ollama LLM with model: {model}")
+    
     # Calculate a hash for the cache
-    prompt_hash = hash(prompt)
+    prompt_hash = hash(prompt + model)
     
     # Check if we have a cached response
     cache_result = get_cached_ollama_response(prompt_hash)
     if cache_result is not None:
+        logger.info("Using cached LLM response")
         llm_status["is_processing"] = False
         llm_status["successful_queries"] += 1
-        return cache_result
+        return cache_result, f"ollama/{model} (cached)"
     
     payload = {
         "model": model,
@@ -107,8 +134,11 @@ def query_ollama_llm(prompt: str, model: str = "llama3") -> str:
         }
     }
     
+    logger.info(f"LLM parameters: temperature={payload['options']['temperature']}, top_p={payload['options']['top_p']}")
+    
     try:
         # Check if model is loaded first to avoid long loading times
+        logger.info("Checking if model is loaded in Ollama")
         model_status_response = requests.get(f"http://localhost:11434/api/tags", timeout=2)
         
         if model_status_response.status_code == 200:
@@ -117,15 +147,22 @@ def query_ollama_llm(prompt: str, model: str = "llama3") -> str:
             
             if not model_loaded:
                 # If model not loaded, return informative message
+                logger.warning(f"Model {model} not loaded in Ollama")
                 llm_status["is_processing"] = False
-                return f"The model '{model}' is not currently loaded in Ollama. Please run 'ollama pull {model}' first."
+                return f"The model '{model}' is not currently loaded in Ollama. Please run 'ollama pull {model}' first.", f"ollama/{model} (not loaded)"
         
         # Make the API call
         start_time = time.time()
+        logger.info("Sending request to Ollama API")
         response = requests.post(OLLAMA_ENDPOINT, json=payload, timeout=30)
         
         if response.status_code == 200:
             result = response.json().get("response", "")
+            processing_time = time.time() - start_time
+            
+            # Log sample of response
+            logger.info(f"LLM responded in {processing_time:.2f} seconds")
+            logger.info(f"Response sample: {result[:100]}...")
             
             # Cache successful responses
             get_cached_ollama_response.cache_clear()  # Clear old cache
@@ -135,52 +172,72 @@ def query_ollama_llm(prompt: str, model: str = "llama3") -> str:
             llm_status["is_processing"] = False
             llm_status["successful_queries"] += 1
             
-            return result
+            return result, f"ollama/{model}"
         else:
             # If we can't reach Ollama, provide a useful error message
+            logger.error(f"Ollama API error: {response.status_code}")
             llm_status["is_processing"] = False
-            return f"I couldn't get a response from the language model. Status code: {response.status_code}. Please check that the Ollama service is running with the {model} model loaded."
+            return f"I couldn't get a response from the language model. Status code: {response.status_code}. Please check that the Ollama service is running with the {model} model loaded.", f"ollama/{model} (error)"
     except requests.exceptions.ConnectionError:
         # Handle connection errors specifically
+        logger.error("Connection error when contacting Ollama API")
         llm_status["is_processing"] = False
-        return "I couldn't connect to the language model. Please check that the Ollama service is running."
+        return "I couldn't connect to the language model. Please check that the Ollama service is running.", f"ollama/{model} (connection error)"
     except requests.exceptions.Timeout:
         # Handle timeout errors
+        logger.error("Timeout when contacting Ollama API")
         llm_status["is_processing"] = False
-        return "The request to the language model timed out. Please try again later."
+        return "The request to the language model timed out. Please try again later.", f"ollama/{model} (timeout)"
     except Exception as e:
         # Generic error handling
+        logger.error(f"Error querying Ollama: {str(e)}")
         llm_status["is_processing"] = False
-        return f"An error occurred while communicating with the language model: {str(e)}"
+        return f"An error occurred while communicating with the language model: {str(e)}", f"ollama/{model} (error)"
 
-def query_openai_llm(prompt: str, model: str = "gpt-3.5-turbo") -> str:
+def query_openai_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     """
     Query OpenAI's LLM API
     
     Args:
         prompt: The formatted prompt
-        model: The OpenAI model to use
+        model_config: Configuration for the model
         
     Returns:
-        str: LLM response
+        tuple: (LLM response, model info)
     """
     global llm_status
     
+    # Get API key and model from config or use defaults
+    api_key = OPENAI_API_KEY
+    model = DEFAULT_OPENAI_MODEL
+    
+    if model_config:
+        if 'api_key' in model_config:
+            api_key = model_config.get('api_key')
+        if 'model' in model_config:
+            model = model_config.get('model')
+    
     # Update status
     llm_status["is_processing"] = True
-    llm_status["last_model_used"] = model
+    llm_status["last_model_used"] = f"openai/{model}"
     llm_status["last_query_time"] = time.time()
     llm_status["total_queries"] += 1
+    
+    logger.info(f"Querying OpenAI LLM with model: {model}")
     
     # Attempt to use OpenAI if configured
     try:
         import openai
         
-        if not OPENAI_API_KEY:
+        if not api_key:
+            logger.error("OpenAI API key not configured")
             llm_status["is_processing"] = False
-            return "OpenAI API key is not configured. Please set OPENAI_API_KEY in your environment variables."
+            return "OpenAI API key is not configured. Please provide an API key to use OpenAI models.", f"openai/{model} (no API key)"
         
-        openai.api_key = OPENAI_API_KEY
+        openai.api_key = api_key
+        
+        logger.info("Sending request to OpenAI API")
+        start_time = time.time()
         
         response = openai.chat.completions.create(
             model=model,
@@ -192,53 +249,143 @@ def query_openai_llm(prompt: str, model: str = "gpt-3.5-turbo") -> str:
             temperature=0.1  # Lower temperature for more deterministic responses
         )
         
+        processing_time = time.time() - start_time
+        result = response.choices[0].message.content
+        
+        logger.info(f"OpenAI responded in {processing_time:.2f} seconds")
+        logger.info(f"Response sample: {result[:100]}...")
+        
         llm_status["is_processing"] = False
         llm_status["successful_queries"] += 1
-        return response.choices[0].message.content
+        return result, f"openai/{model}"
     except ImportError:
+        logger.error("OpenAI Python package not installed")
         llm_status["is_processing"] = False
-        return "OpenAI Python package is not installed. Please install it with 'pip install openai'."
+        return "OpenAI Python package is not installed. Please install it with 'pip install openai'.", f"openai/{model} (not installed)"
     except Exception as e:
+        logger.error(f"Error using OpenAI: {str(e)}")
         llm_status["is_processing"] = False
-        return f"Error calling OpenAI API: {str(e)}"
+        return f"Error with OpenAI API: {str(e)}", f"openai/{model} (error)"
 
-def get_answer_from_llm(question: str, context_documents: List[str]) -> str:
+def query_gemini_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     """
-    Get an answer from the LLM using the question and context
+    Query Google's Gemini API
+    
+    Args:
+        prompt: The formatted prompt
+        model_config: Configuration for the model
+        
+    Returns:
+        tuple: (LLM response, model info)
+    """
+    global llm_status
+    
+    # Get API key and model from config or use defaults
+    api_key = GEMINI_API_KEY
+    model = DEFAULT_GEMINI_MODEL
+    
+    if model_config:
+        if 'api_key' in model_config:
+            api_key = model_config.get('api_key')
+        if 'model' in model_config:
+            model = model_config.get('model')
+    
+    # Update status
+    llm_status["is_processing"] = True
+    llm_status["last_model_used"] = f"gemini/{model}"
+    llm_status["last_query_time"] = time.time()
+    llm_status["total_queries"] += 1
+    
+    logger.info(f"Querying Gemini LLM with model: {model}")
+    
+    try:
+        try:
+            import google.generativeai as genai
+        except ImportError:
+            logger.error("Google Generative AI package not installed")
+            llm_status["is_processing"] = False
+            return "Google Generative AI package is not installed. Please install it with 'pip install google-generativeai'.", f"gemini/{model} (not installed)"
+        
+        if not api_key:
+            logger.error("Gemini API key not configured")
+            llm_status["is_processing"] = False
+            return "Gemini API key is not configured. Please provide an API key to use Gemini models.", f"gemini/{model} (no API key)"
+        
+        # Configure the Gemini API
+        genai.configure(api_key=api_key)
+        
+        # Create a Gemini model instance
+        gemini_model = genai.GenerativeModel(model)
+        
+        logger.info("Sending request to Gemini API")
+        start_time = time.time()
+        
+        # Generate content
+        response = gemini_model.generate_content(prompt)
+        
+        processing_time = time.time() - start_time
+        result = response.text
+        
+        logger.info(f"Gemini responded in {processing_time:.2f} seconds")
+        logger.info(f"Response sample: {result[:100]}...")
+        
+        llm_status["is_processing"] = False
+        llm_status["successful_queries"] += 1
+        return result, f"gemini/{model}"
+    except Exception as e:
+        logger.error(f"Error using Gemini: {str(e)}")
+        llm_status["is_processing"] = False
+        return f"Error with Gemini API: {str(e)}", f"gemini/{model} (error)"
+
+def get_answer_from_llm(question: str, context_documents: List[str], model_config: Dict[str, Any] = None) -> tuple:
+    """
+    Get an answer from the LLM based on the context documents
     
     Args:
         question: User's question
         context_documents: List of relevant document chunks
+        model_config: Configuration for the model
         
     Returns:
-        str: LLM's answer
+        tuple: (answer, model_info)
     """
-    # Check cache first
-    cache_key = get_cache_key(question, context_documents)
-    if cache_key in query_cache:
-        return query_cache[cache_key]
+    logger.info(f"Getting answer for question: {question[:50]}...")
+    logger.info(f"Using {len(context_documents)} context documents")
     
-    # Create prompt
+    if model_config:
+        logger.info(f"Using model config: {model_config}")
+    
+    # Check cache first
+    cache_key = get_cache_key(question, context_documents, model_config)
+    if cache_key in query_cache:
+        logger.info("Using cached response")
+        return query_cache[cache_key], "cached response"
+    
+    # Create a prompt with the context
     prompt = create_prompt_with_context(question, context_documents)
     
-    # First try Ollama, then fallback to OpenAI if available
-    ollama_response = query_ollama_llm(prompt)
+    # Determine which provider to use
+    provider = "ollama"  # Default provider
     
-    # Check if we got an error response from Ollama
-    if "couldn't connect" in ollama_response or "error occurred" in ollama_response or "check that the Ollama service" in ollama_response:
-        # Try OpenAI if Ollama failed and OpenAI is configured
-        if OPENAI_API_KEY:
-            result = query_openai_llm(prompt)
-        else:
-            # If both failed, return a specific error
-            result = "No working LLM service is available. Please check that either Ollama is running or OpenAI API key is configured."
-    else:
-        result = ollama_response
+    if model_config and 'provider' in model_config:
+        provider = model_config.get('provider')
+    
+    answer = None
+    model_info = None
+    
+    # Query the appropriate provider
+    if provider == "openai":
+        answer, model_info = query_openai_llm(prompt, model_config)
+    elif provider == "gemini":
+        answer, model_info = query_gemini_llm(prompt, model_config)
+    else:  # Default to Ollama
+        answer, model_info = query_ollama_llm(prompt, model_config)
     
     # Cache the result
-    query_cache[cache_key] = result
+    if answer:
+        query_cache[cache_key] = answer
     
-    return result
+    return answer, model_info
 
 def get_llm_status() -> Dict[str, Any]:
     """
@@ -259,20 +406,21 @@ def get_llm_status() -> Dict[str, Any]:
     return status_copy
 
 # Async version of the LLM query function for background processing
-async def get_answer_from_llm_async(question: str, context_documents: List[str]) -> str:
+async def get_answer_from_llm_async(question: str, context_documents: List[str], model_config: Dict[str, Any] = None) -> str:
     """
     Async version of get_answer_from_llm
     """
     loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, get_answer_from_llm, question, context_documents)
+    return await loop.run_in_executor(None, get_answer_from_llm, question, context_documents, model_config)
 
-async def get_streaming_response(question: str, context_documents: List[str]) -> AsyncIterator[str]:
+async def get_streaming_response(question: str, context_documents: List[str], model_config: Dict[str, Any] = None) -> AsyncIterator[str]:
     """
     Stream tokens from the LLM as they're generated
     
     Args:
         question: User's question
         context_documents: List of relevant document chunks
+        model_config: Configuration for the model
         
     Yields:
         str: Individual tokens as they're generated
@@ -284,15 +432,52 @@ async def get_streaming_response(question: str, context_documents: List[str]) ->
     llm_status["last_query_time"] = time.time()
     llm_status["total_queries"] += 1
     
-    # Try Ollama streaming first
+    # Determine which provider to use
+    provider = "ollama"  # Default provider
+    
+    if model_config and 'provider' in model_config:
+        provider = model_config.get('provider')
+    
+    # Create prompt
+    prompt = create_prompt_with_context(question, context_documents)
+    
     try:
-        # Create prompt
-        prompt = create_prompt_with_context(question, context_documents)
-        
-        # Set up the model to use
-        model = "llama3.2:latest"
-        llm_status["last_model_used"] = model
-        
+        if provider == "openai":
+            # Stream from OpenAI
+            async for token in stream_from_openai(prompt, model_config):
+                yield token
+        elif provider == "gemini":
+            # Stream from Gemini
+            async for token in stream_from_gemini(prompt, model_config):
+                yield token
+        else:
+            # Default to Ollama
+            async for token in stream_from_ollama(prompt, model_config):
+                yield token
+                
+        # Update status after successful generation
+        llm_status["is_processing"] = False
+        llm_status["successful_queries"] += 1
+    except Exception as e:
+        logger.error(f"Error in streaming response: {str(e)}")
+        yield f"Error: Could not stream response from {provider}. {str(e)}"
+        llm_status["is_processing"] = False
+
+async def stream_from_ollama(prompt: str, model_config: Dict[str, Any] = None) -> AsyncIterator[str]:
+    """Stream tokens from Ollama"""
+    global llm_status
+    
+    # Get model from config or use default
+    model = DEFAULT_OLLAMA_MODEL
+    if model_config and 'model' in model_config:
+        model = model_config.get('model')
+    
+    # Update model used in status
+    llm_status["last_model_used"] = f"ollama/{model}"
+    
+    logger.info(f"Streaming from Ollama with model: {model}")
+    
+    try:
         # Check if model is loaded
         try:
             model_status_response = requests.get(f"http://localhost:11434/api/tags", timeout=2)
@@ -303,12 +488,10 @@ async def get_streaming_response(question: str, context_documents: List[str]) ->
                 
                 if not model_loaded:
                     yield f"The model '{model}' is not currently loaded in Ollama. Please run 'ollama pull {model}' first."
-                    llm_status["is_processing"] = False
                     return
         except:
             # If we can't check, continue anyway
-            print("Could not check model status, assuming it's loaded.")
-            pass
+            logger.warning("Could not check model status, assuming it's loaded.")
             
         # Prepare the streaming request to Ollama
         payload = {
@@ -321,7 +504,8 @@ async def get_streaming_response(question: str, context_documents: List[str]) ->
                 "num_predict": 1024
             }
         }
-          # Make streaming request
+        
+        # Make streaming request
         async with aiohttp.ClientSession() as session:
             async with session.post(
                 "http://localhost:11434/api/generate", 
@@ -342,42 +526,43 @@ async def get_streaming_response(question: str, context_documents: List[str]) ->
                                     yield token
                             except json.JSONDecodeError:
                                 continue
-                                
-                    # Update status after successful generation
-                    llm_status["is_processing"] = False
-                    llm_status["successful_queries"] += 1
                 else:
-                    # Fall back to OpenAI if Ollama fails
-                    async for token in stream_from_openai(prompt):
-                        yield token
-        
+                    yield f"Error from Ollama API: {response.status}"
     except Exception as e:
-        # Attempt to use OpenAI streaming if available
-        try:
-            async for token in stream_from_openai(prompt):
-                yield token
-        except Exception as inner_e:
-            # If everything fails, return an error message
-            yield f"Error: Could not stream response from any available LLM service. {str(e)}"
-            llm_status["is_processing"] = False
+        logger.error(f"Error streaming from Ollama: {str(e)}")
+        yield f"Error streaming from Ollama: {str(e)}"
 
-async def stream_from_openai(prompt: str) -> AsyncIterator[str]:
+async def stream_from_openai(prompt: str, model_config: Dict[str, Any] = None) -> AsyncIterator[str]:
     """Stream tokens from OpenAI"""
     global llm_status
     
+    # Get API key and model from config or use defaults
+    api_key = OPENAI_API_KEY
+    model = DEFAULT_OPENAI_MODEL
+    
+    if model_config:
+        if 'api_key' in model_config:
+            api_key = model_config.get('api_key')
+        if 'model' in model_config:
+            model = model_config.get('model')
+    
+    # Update model used in status
+    llm_status["last_model_used"] = f"openai/{model}"
+    
+    logger.info(f"Streaming from OpenAI with model: {model}")
+    
     try:
         # Check if OpenAI is properly configured
-        if not OPENAI_API_KEY:
-            yield "OpenAI API key is not configured. Please set OPENAI_API_KEY in your environment variables."
-            llm_status["is_processing"] = False
+        if not api_key:
+            yield "OpenAI API key is not configured. Please provide an API key to use OpenAI models."
             return
             
         import openai
-        openai.api_key = OPENAI_API_KEY
+        openai.api_key = api_key
         
         # Create the streaming response
         stream = await openai.chat.completions.create(
-            model="gpt-3.5-turbo",
+            model=model,
             messages=[
                 {"role": "system", "content": "You are a helpful assistant for question-answering."},
                 {"role": "user", "content": prompt}
@@ -392,13 +577,113 @@ async def stream_from_openai(prompt: str) -> AsyncIterator[str]:
             if chunk.choices[0].delta.content:
                 yield chunk.choices[0].delta.content
                 
-        # Update status after successful generation
-        llm_status["is_processing"] = False
-        llm_status["successful_queries"] += 1
-        
     except ImportError:
         yield "OpenAI Python package is not installed. Please install it with 'pip install openai'."
-        llm_status["is_processing"] = False
     except Exception as e:
-        yield f"Error calling OpenAI API: {str(e)}"
-        llm_status["is_processing"] = False
+        logger.error(f"Error streaming from OpenAI: {str(e)}")
+        yield f"Error streaming from OpenAI: {str(e)}"
+
+async def stream_from_gemini(prompt: str, model_config: Dict[str, Any] = None) -> AsyncIterator[str]:
+    """Stream tokens from Gemini"""
+    global llm_status
+    
+    # Get API key and model from config or use defaults
+    api_key = GEMINI_API_KEY
+    model = DEFAULT_GEMINI_MODEL
+    
+    if model_config:
+        if 'api_key' in model_config:
+            api_key = model_config.get('api_key')
+        if 'model' in model_config:
+            model = model_config.get('model')
+    
+    # Update model used in status
+    llm_status["last_model_used"] = f"gemini/{model}"
+    
+    logger.info(f"Streaming from Gemini with model: {model}")
+    
+    try:
+        try:
+            import google.generativeai as genai
+        except ImportError:
+            yield "Google Generative AI package is not installed. Please install it with 'pip install google-generativeai'."
+            return
+        
+        if not api_key:
+            yield "Gemini API key is not configured. Please provide an API key to use Gemini models."
+            return
+        
+        # Configure the Gemini API
+        genai.configure(api_key=api_key)
+        
+        # Create a Gemini model instance
+        gemini_model = genai.GenerativeModel(model)
+        
+        # Generate content with streaming
+        stream = gemini_model.generate_content(prompt, stream=True)
+        
+        # Process the streaming response
+        for chunk in stream:
+            if chunk.text:
+                yield chunk.text
+                
+    except Exception as e:
+        logger.error(f"Error streaming from Gemini: {str(e)}")
+        yield f"Error streaming from Gemini: {str(e)}"
+
+def get_available_models() -> List[Dict[str, Any]]:
+    """
+    Get a list of available LLM models
+    
+    Returns:
+        List[Dict]: List of model information
+    """
+    models = []
+    
+    # Try to get Ollama models
+    try:
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
+        if response.status_code == 200:
+            data = response.json()
+            if data and "models" in data:
+                for model_info in data["models"]:
+                    models.append({
+                        "name": model_info["name"],
+                        "provider": "ollama",
+                        "description": f"Ollama - {model_info.get('size', 'Unknown size')}"
+                    })
+        else:
+            # Add default Ollama model if we can't connect
+            models.append({
+                "name": DEFAULT_OLLAMA_MODEL,
+                "provider": "ollama",
+                "description": "Ollama - Default model"
+            })
+    except:
+        # Add default Ollama model if we can't connect
+        models.append({
+            "name": DEFAULT_OLLAMA_MODEL,
+            "provider": "ollama",
+            "description": "Ollama - Default model"
+        })
+    
+    # Add OpenAI models
+    models.append({
+        "name": "gpt-3.5-turbo",
+        "provider": "openai",
+        "description": "OpenAI - GPT-3.5 Turbo"
+    })
+    models.append({
+        "name": "gpt-4",
+        "provider": "openai",
+        "description": "OpenAI - GPT-4"
+    })
+    
+    # Add Gemini models
+    models.append({
+        "name": "gemini-pro",
+        "provider": "gemini",
+        "description": "Google - Gemini Pro"
+    })
+    
+    return models

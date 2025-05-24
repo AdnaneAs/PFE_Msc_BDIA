@@ -24,10 +24,15 @@ function App() {
     }
 
     fetchData();
-  }, []);
-
+  }, []);  // Handle query results including streaming updates
   const handleQueryResult = (result) => {
-    setQueryResult(result);
+    console.log("App received query result:", result);
+    if (result) {
+      // Make sure we're updating the state with the new result
+      setQueryResult({...result});
+    } else {
+      setQueryResult(null);
+    }
   };
 
   return (

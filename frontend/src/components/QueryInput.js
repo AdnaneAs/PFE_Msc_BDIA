@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { submitQuery, getLLMStatus, streamQuery } from '../services/api';
+import { submitQuery, getLLMStatus, streamQuery, getOllamaModels } from '../services/api';
 
 const QueryInput = ({ onQueryResult }) => {
   const [question, setQuestion] = useState('');
@@ -12,6 +12,35 @@ const QueryInput = ({ onQueryResult }) => {
   const [streamedResponse, setStreamedResponse] = useState('');
   const [streamSources, setStreamSources] = useState([]);
   const eventSourceRef = useRef(null);
+
+  // Model selection states
+  const [modelProvider, setModelProvider] = useState('ollama_local');
+  const [apiKey, setApiKey] = useState('');
+  const [ollamaModels, setOllamaModels] = useState([]);
+  const [selectedOllamaModel, setSelectedOllamaModel] = useState('llama3.2:latest');
+  
+  // Fetch Ollama models on initial load
+  useEffect(() => {
+    const fetchOllamaModels = async () => {
+      try {
+        const models = await getOllamaModels();
+        if (models && models.length > 0) {
+          setOllamaModels(models);
+          // Default to first model if available
+          if (models.length > 0 && !models.includes(selectedOllamaModel)) {
+            setSelectedOllamaModel(models[0]);
+          }
+        } else {
+          setOllamaModels(['llama3.2:latest']);
+        }
+      } catch (err) {
+        console.error("Failed to fetch Ollama models:", err);
+        setOllamaModels(['llama3.2:latest']);
+      }
+    };
+    
+    fetchOllamaModels();
+  }, []);
 
   // Fetch LLM status initially and after queries
   useEffect(() => {
@@ -50,11 +79,45 @@ const QueryInput = ({ onQueryResult }) => {
     setQueryStatus(null);
   };
 
+  const getCurrentModelConfig = () => {
+    // Create model config based on selected provider
+    if (modelProvider === 'ollama_local') {
+      return {
+        provider: 'ollama',
+        model: selectedOllamaModel
+      };
+    } else if (modelProvider === 'openai') {
+      return {
+        provider: 'openai',
+        model: 'gpt-3.5-turbo',
+        api_key: apiKey
+      };
+    } else if (modelProvider === 'gemini') {
+      return {
+        provider: 'gemini',
+        model: 'gemini-pro',
+        api_key: apiKey
+      };
+    }
+    
+    // Default fallback
+    return {
+      provider: 'ollama',
+      model: 'llama3.2:latest'
+    };
+  };
+
   const handleSubmitStreaming = async (e) => {
     e.preventDefault();
     
     if (!question.trim()) {
       setError('Please enter a question');
+      return;
+    }
+    
+    // Check if API key is provided when needed
+    if ((modelProvider === 'openai' || modelProvider === 'gemini') && !apiKey) {
+      setError(`Please enter an API key for ${modelProvider === 'openai' ? 'OpenAI' : 'Gemini'}`);
       return;
     }
     
@@ -75,8 +138,11 @@ const QueryInput = ({ onQueryResult }) => {
         eventSourceRef.current.close();
       }
       
+      // Get current model configuration
+      const modelConfig = getCurrentModelConfig();
+      
       // Create the event source for streaming
-      const eventSource = streamQuery(question);
+      const eventSource = streamQuery(question, modelConfig);
       eventSourceRef.current = eventSource;
       
       // Handle incoming chunks
@@ -102,17 +168,24 @@ const QueryInput = ({ onQueryResult }) => {
               streaming: true
             };
             onQueryResult(partialResult);
-          }
+          }          
           // Handle token updates
           else if (data.token) {
-            setStreamedResponse(prev => prev + data.token);
+            // Update the streamed response in state
+            const newResponse = streamedResponse + data.token;
+            setStreamedResponse(newResponse);
+            
+            // Log the token and current accumulated response for debugging
+            console.log("Received token:", data.token);
+            console.log("Current accumulated response length:", newResponse.length);
             
             // Update the result with the current accumulated response
             const updatedResult = {
-              answer: streamedResponse + data.token,
+              answer: newResponse,
               sources: streamSources,
               num_sources: streamSources.length,
-              streaming: true
+              streaming: true,
+              retrieval_time_ms: queryStatus?.retrievalTime,
             };
             onQueryResult(updatedResult);
           }
@@ -124,14 +197,23 @@ const QueryInput = ({ onQueryResult }) => {
               queryTime: data.query_time_ms
             });
             
-            // Create the final result object
+            // Create the final result object with the latest accumulated response
+            // This ensures we're using the most up-to-date response
+            const finalResponse = streamedResponse + (data.final_token || '');
+            setStreamedResponse(finalResponse);
+            
+            console.log("Streaming complete. Final answer length:", finalResponse.length);
+            
             const finalResult = {
-              answer: streamedResponse,
+              answer: finalResponse,
               sources: streamSources,
               num_sources: streamSources.length,
               query_time_ms: data.query_time_ms,
+              retrieval_time_ms: queryStatus?.retrievalTime,
               streaming: false
             };
+            
+            // Make sure the final result is sent to the parent component
             onQueryResult(finalResult);
             
             // Close the event source
@@ -202,6 +284,12 @@ const QueryInput = ({ onQueryResult }) => {
       return;
     }
     
+    // Check if API key is provided when needed
+    if ((modelProvider === 'openai' || modelProvider === 'gemini') && !apiKey) {
+      setError(`Please enter an API key for ${modelProvider === 'openai' ? 'OpenAI' : 'Gemini'}`);
+      return;
+    }
+    
     if (!isRetry) {
       setLoading(true);
       setError(null);
@@ -210,36 +298,45 @@ const QueryInput = ({ onQueryResult }) => {
     // Update status to show steps
     setQueryStatus({
       state: 'searching',
-      message: isRetry ? 'Retrying with standard query...' : 'Searching for relevant documents...'
+      message: 'Searching for relevant documents...'
     });
     
     try {
-      // Attempt the query
-      const result = await submitQuery(question);
+      // Start timestamp for performance measurement
+      const startTime = Date.now();
       
-      // Fetch updated LLM status after query
-      fetchLlmStatus();
+      // Get current model configuration
+      const modelConfig = getCurrentModelConfig();
       
-      // Check if the response contains placeholder text
-      if (result.answer.includes("couldn't connect to the language model")) {
-        // Still return the result, but set an informative error
-        onQueryResult(result);
-        setError("The language model connection failed. Please ensure Ollama is running locally with the llama3 model, or configure an OpenAI API key.");
-      } else {
-        // Successfully got a real answer
-        onQueryResult(result);
-        setQueryStatus({
-          state: 'success',
-          message: 'Answer generated successfully!'
+      // Send the query to the backend
+      const result = await submitQuery(question, modelConfig);
+      
+      // Update status
+      setQueryStatus({
+        state: 'success',
+        message: 'Answer generated successfully!',
+        queryTime: result.query_time_ms
+      });
+      
+      console.log("Normal query complete. Result:", result);
+      
+      // Explicitly ensure the answer is passed to the parent component
+      if (result) {
+        onQueryResult({
+          ...result,
+          streaming: false
         });
       }
+      
+      // Fetch updated LLM status after query completion
+      fetchLlmStatus();
     } catch (err) {
+      console.error('Error submitting query:', err);
+      setError(err.message || 'Error submitting query');
       setQueryStatus({
         state: 'error',
         message: 'Failed to get an answer'
       });
-      setError(err.message || 'Failed to get an answer');
-      onQueryResult(null);
     } finally {
       setLoading(false);
     }
@@ -263,7 +360,90 @@ const QueryInput = ({ onQueryResult }) => {
   return (
     <div className="bg-white shadow-md rounded-lg p-6 mb-6">
       <h2 className="text-xl font-semibold text-gray-800 mb-4">Query Documents</h2>
-        <form onSubmit={handleSubmit}>
+      
+      {/* Model selection UI */}
+      <div className="mb-6">
+        <h3 className="text-sm font-medium text-gray-700 mb-2">Model Selection</h3>
+        <div className="grid grid-cols-1 md:grid-cols-3 gap-3 mb-4">
+          <div className="flex items-center">
+            <input
+              id="ollama-local"
+              type="radio"
+              value="ollama_local"
+              checked={modelProvider === 'ollama_local'}
+              onChange={() => setModelProvider('ollama_local')}
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+            />
+            <label htmlFor="ollama-local" className="ml-2 block text-sm text-gray-700">
+              Ollama (Local)
+            </label>
+          </div>
+          <div className="flex items-center">
+            <input
+              id="openai"
+              type="radio"
+              value="openai"
+              checked={modelProvider === 'openai'}
+              onChange={() => setModelProvider('openai')}
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+            />
+            <label htmlFor="openai" className="ml-2 block text-sm text-gray-700">
+              OpenAI
+            </label>
+          </div>
+          <div className="flex items-center">
+            <input
+              id="gemini"
+              type="radio"
+              value="gemini"
+              checked={modelProvider === 'gemini'}
+              onChange={() => setModelProvider('gemini')}
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+            />
+            <label htmlFor="gemini" className="ml-2 block text-sm text-gray-700">
+              Google Gemini
+            </label>
+          </div>
+        </div>
+        
+        {/* Dynamic model options based on selected provider */}
+        {modelProvider === 'ollama_local' && (
+          <div className="mb-4">
+            <label htmlFor="ollama-model" className="block text-sm font-medium text-gray-700 mb-1">
+              Ollama Model
+            </label>
+            <select
+              id="ollama-model"
+              value={selectedOllamaModel}
+              onChange={(e) => setSelectedOllamaModel(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            >
+              {ollamaModels.map(model => (
+                <option key={model} value={model}>{model}</option>
+              ))}
+            </select>
+          </div>
+        )}
+        
+        {/* API Key input for OpenAI or Gemini */}
+        {(modelProvider === 'openai' || modelProvider === 'gemini') && (
+          <div className="mb-4">
+            <label htmlFor="api-key" className="block text-sm font-medium text-gray-700 mb-1">
+              {modelProvider === 'openai' ? 'OpenAI' : 'Gemini'} API Key
+            </label>
+            <input
+              id="api-key"
+              type="password"
+              value={apiKey}
+              onChange={(e) => setApiKey(e.target.value)}
+              placeholder={`Enter your ${modelProvider === 'openai' ? 'OpenAI' : 'Gemini'} API key`}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            />
+          </div>
+        )}
+      </div>
+      
+      <form onSubmit={handleSubmit}>
         <div className="mb-4">
           <label htmlFor="question" className="block text-sm font-medium text-gray-700 mb-2">
             Ask a question about your documents
@@ -389,7 +569,7 @@ const QueryInput = ({ onQueryResult }) => {
               <p>To fix this issue:</p>
               <ol className="list-decimal pl-5 mt-1 space-y-1">
                 <li>Make sure Ollama is installed on your computer</li>
-                <li>Run <code className="bg-gray-100 px-1 rounded">ollama run llama3</code> in a terminal</li> 
+                <li>Run <code className="bg-gray-100 px-1 rounded">ollama run llama3.2:latest</code> in a terminal</li> 
                 <li>Or set an OpenAI API key in your backend environment</li>
               </ol>
             </div>

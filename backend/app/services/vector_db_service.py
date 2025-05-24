@@ -1,10 +1,16 @@
 import os
+import logging
 from typing import List, Dict, Any, Optional
 import chromadb
 from app.config import CHROMA_DB_PATH, TOP_K_RESULTS
 
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
+
 # Ensure the DB directory exists
 os.makedirs(CHROMA_DB_PATH, exist_ok=True)
+logger.info(f"Vector database path: {CHROMA_DB_PATH}")
 
 # Initialize ChromaDB client
 _client = None
@@ -18,6 +24,7 @@ def get_chroma_client():
     """
     global _client
     if _client is None:
+        logger.info(f"Initializing ChromaDB client at {CHROMA_DB_PATH}")
         _client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
     return _client
 
@@ -35,6 +42,11 @@ def get_collection(collection_name: str = "documents"):
     
     # Get or create collection without specifying an embedding function
     collection = client.get_or_create_collection(name=collection_name)
+    
+    # Log collection info
+    count = collection.count()
+    logger.info(f"Using collection '{collection_name}' with {count} documents")
+    
     return collection
 
 def add_documents(
@@ -61,6 +73,8 @@ def add_documents(
     # Generate IDs if not already in metadata
     ids = [str(i) for i in range(len(texts))]
     
+    logger.info(f"Adding {len(texts)} documents to collection '{collection_name}'")
+    
     # Add documents to collection
     collection.add(
         documents=texts,
@@ -68,6 +82,10 @@ def add_documents(
         metadatas=metadatas,
         ids=ids
     )
+    
+    # Log updated count
+    count = collection.count()
+    logger.info(f"Collection '{collection_name}' now has {count} documents")
     
     return ids
 
@@ -90,15 +108,33 @@ def query_documents(
     # Get collection
     collection = get_collection(collection_name)
     
+    logger.info(f"Querying collection '{collection_name}' for top {n_results} results")
+    
     # Query collection
     results = collection.query(
         query_embeddings=[query_embedding],
         n_results=n_results
     )
     
+    # Process results
+    documents = results.get("documents", [[]])[0]
+    metadatas = results.get("metadatas", [[]])[0]
+    distances = results.get("distances", [[]])[0]
+    ids = results.get("ids", [[]])[0]
+    
+    # Log query results
+    logger.info(f"Found {len(documents)} documents matching the query")
+    if len(distances) > 0:
+        logger.info(f"Top result similarity score: {1.0 - distances[0]:.4f}")
+    
+    # Log source document info
+    if len(metadatas) > 0:
+        sources = [f"{m.get('filename', 'unknown')}:{m.get('chunk_index', 0)}" for m in metadatas[:3]]
+        logger.info(f"Top sources: {', '.join(sources)}")
+    
     return {
-        "documents": results.get("documents", [[]])[0],
-        "metadatas": results.get("metadatas", [[]])[0],
-        "distances": results.get("distances", [[]])[0],
-        "ids": results.get("ids", [[]])[0]
+        "documents": documents,
+        "metadatas": metadatas,
+        "distances": distances,
+        "ids": ids
     } 

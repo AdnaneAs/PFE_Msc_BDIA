@@ -3,6 +3,7 @@ import React, { useState, useEffect } from 'react';
 const ResultDisplay = ({ result }) => {
   const [showDebugInfo, setShowDebugInfo] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
+  const [displayedAnswer, setDisplayedAnswer] = useState('');
   
   // Check if response is currently streaming
   useEffect(() => {
@@ -10,6 +11,21 @@ const ResultDisplay = ({ result }) => {
       setIsStreaming(result.streaming);
     } else {
       setIsStreaming(false);
+    }
+  }, [result]);
+  
+  // Update displayed answer when result changes
+  useEffect(() => {
+    if (result && result.answer !== undefined) {
+      console.log("Updating displayed answer, length:", result.answer?.length || 0);
+      setDisplayedAnswer(result.answer);
+    }
+  }, [result?.answer]);
+  
+  // Debug logging
+  useEffect(() => {
+    if (result) {
+      console.log("ResultDisplay received:", result);
     }
   }, [result]);
   
@@ -21,8 +37,7 @@ const ResultDisplay = ({ result }) => {
       </div>
     );
   }
-
-  const { answer, sources, query_time_ms, retrieval_time_ms, llm_time_ms, num_sources } = result;
+  const { sources, query_time_ms, retrieval_time_ms, llm_time_ms, num_sources } = result || {};
   
   // Format time values for display
   const formatTime = (time) => {
@@ -30,22 +45,24 @@ const ResultDisplay = ({ result }) => {
     if (time < 1000) return `${time}ms`;
     return `${(time / 1000).toFixed(2)}s`;
   };
-
+  
   return (
     <div className="bg-white shadow-md rounded-lg p-6 mb-6">
       <h2 className="text-xl font-semibold text-gray-800 mb-4">Results</h2>
-        <div className="mb-6">
+      <div className="mb-6">
         <h3 className="font-medium text-gray-700 mb-2">
-          Answer:{isStreaming && <span className="ml-2 text-sm text-blue-500 animate-pulse">Streaming...</span>}
+          Answer: {isStreaming && <span className="ml-2 text-sm text-blue-500 animate-pulse">Streaming...</span>}
         </h3>
         <div className="p-4 bg-blue-50 rounded-md text-gray-800 whitespace-pre-line">
-          {answer}
+          {displayedAnswer ? displayedAnswer : "No answer generated yet."}
           {isStreaming && <span className="inline-block w-2 h-4 bg-gray-800 ml-1 animate-pulse">|</span>}
         </div>
       </div>
-        {/* Performance metrics summary */}
+      
+      {/* Performance metrics summary */}
       <div className="mb-4 flex items-center">
         <div className="text-xs text-gray-500 flex-grow">
+          <span className="mr-3">Model: {result.model || 'Default'}</span>
           {num_sources !== undefined && (
             <span className="mr-3">Sources: {num_sources}</span>
           )}
@@ -63,7 +80,8 @@ const ResultDisplay = ({ result }) => {
           {showDebugInfo ? 'Hide Details' : 'Show Details'}
         </button>
       </div>
-        {/* Debug information panel */}
+      
+      {/* Debug information panel */}
       {showDebugInfo && (
         <div className="mb-6 p-3 bg-yellow-50 border border-yellow-100 rounded-md text-xs">
           <h3 className="font-medium text-yellow-800 mb-2">Performance Metrics:</h3>

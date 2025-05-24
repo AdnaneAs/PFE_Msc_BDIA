@@ -1,7 +1,12 @@
+import logging
 from typing import List
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from app.config import EMBEDDING_MODEL_NAME
+
+# Configure logging
+logging.basicConfig(level=logging.INFO)
+logger = logging.getLogger(__name__)
 
 # Load the model once at module initialization
 _model = None
@@ -15,7 +20,10 @@ def get_embedding_model():
     """
     global _model
     if _model is None:
+        logger.info(f"Loading embedding model: {EMBEDDING_MODEL_NAME}")
         _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
+        # Log model information
+        logger.info(f"Embedding model loaded successfully. Dimensions: {_model.get_sentence_embedding_dimension()}")
     return _model
 
 def generate_embeddings(texts: List[str]) -> List[List[float]]:
@@ -29,7 +37,14 @@ def generate_embeddings(texts: List[str]) -> List[List[float]]:
         List[List[float]]: List of embeddings (as float lists)
     """
     model = get_embedding_model()
+    logger.info(f"Generating embeddings for {len(texts)} text chunks")
+    
     embeddings = model.encode(texts)
+    
+    # Log sample of first embedding (first 5 dimensions)
+    if len(embeddings) > 0:
+        sample = embeddings[0][:5].tolist()
+        logger.info(f"Sample embedding (first 5 dimensions): {sample}...")
     
     # Convert numpy arrays to native Python lists for JSON serialization
     return embeddings.tolist()
@@ -44,4 +59,5 @@ def generate_embedding(text: str) -> List[float]:
     Returns:
         List[float]: Embedding as float list
     """
+    logger.info(f"Generating embedding for query: {text[:50]}...")
     return generate_embeddings([text])[0] 

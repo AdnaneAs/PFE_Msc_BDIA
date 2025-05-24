@@ -22,7 +22,21 @@ const FileUpload = () => {
   // Function to add a debug entry with timestamp
   const addDebugEntry = (message, color) => {
     const timestamp = new Date().toLocaleTimeString();
-    setDebugInfo(prev => [...prev, { message, timestamp, color }]);
+    const entry = { message, timestamp, color };
+    console.log(`Upload debug [${timestamp}]: ${message}`);
+    setDebugInfo(prev => {
+      // Keep only the last 10 entries to avoid performance issues
+      const newDebugInfo = [...prev, entry];
+      if (newDebugInfo.length > 10) {
+        return newDebugInfo.slice(-10);
+      }
+      return newDebugInfo;
+    });
+  };
+
+  // Clear debug logs
+  const clearDebugLogs = () => {
+    setDebugInfo([]);
   };
 
   // Function to determine progress bar color based on status
@@ -169,7 +183,11 @@ const FileUpload = () => {
     setError(null);
     setUploadResult(null);
     setProcessingStatus(null);
-    setDebugInfo([]);
+    clearDebugLogs();
+    
+    if (selectedFile) {
+      addDebugEntry(`Selected file: ${selectedFile.name} (${(selectedFile.size / 1024).toFixed(2)} KB)`, 'blue');
+    }
   };
 
   const handleUpload = async () => {
@@ -185,7 +203,7 @@ const FileUpload = () => {
 
     setUploading(true);
     setError(null);
-    setDebugInfo([]);
+    clearDebugLogs();
     setProcessingStatus({
       status: 'starting',
       message: 'Starting upload...',
@@ -194,36 +212,32 @@ const FileUpload = () => {
     
     // Add first debug entry
     addDebugEntry('Upload process started', 'blue');
+    addDebugEntry(`Uploading file: ${file.name}`, 'blue');
     
     try {
       // Use async upload for better progress tracking
       const result = await uploadDocumentAsync(file);
-      addDebugEntry(`Upload initiated for ${file.name}`, 'blue');
       
-      // Start streaming status updates
-      if (result.doc_id) {
-        // Close previous event source if it exists
-        if (eventSourceRef.current) {
-          eventSourceRef.current.close();
-        }
+      if (result && result.doc_id) {
+        addDebugEntry(`Upload successful. Document ID: ${result.doc_id}`, 'green');
         
-        addDebugEntry(`Document ID received: ${result.doc_id}`, 'blue');
-        
-        // Setup the event source or fallback to polling
+        // Set up event source for real-time updates
         setupEventSource(result.doc_id);
+        
+        // Update status
+        setProcessingStatus({
+          status: 'uploaded',
+          message: 'Document uploaded. Processing started...',
+          progress: 25,
+          docId: result.doc_id
+        });
       } else {
-        // If no doc_id, use the result directly
-        setUploadResult(result);
-        addDebugEntry('Direct upload completed', 'green');
-        setUploading(false);
+        throw new Error('Invalid response from server');
       }
-      
-      // Reset file input
-      document.getElementById('file-upload').value = '';
-      setFile(null);
-    } catch (err) {
-      setError(err.message || 'Failed to upload document');
-      addDebugEntry(`Upload error: ${err.message}`, 'red');
+    } catch (error) {
+      console.error('Upload error:', error);
+      setError(error.message || 'Failed to upload document');
+      addDebugEntry(`Upload error: ${error.message}`, 'red');
       setUploading(false);
     }
   };
