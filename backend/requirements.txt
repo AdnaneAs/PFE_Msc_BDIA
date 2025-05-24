@@ -1,3 +1,46 @@
 fastapi==0.100.0
 uvicorn[standard]==0.23.0
-python-dotenv==1.0.0 
+python-dotenv==1.0.0
+requests==2.31.0
+numpy==1.26.4
+huggingface_hub==0.19.4
+sentence-transformers==2.2.2
+chromadb==0.3.26
+pydantic==1.10.8
+aiofiles==23.2.1
+python-multipart==0.0.6
+httpx==0.25.0
+streamlit>=1.29.0
+pandas>=2.1.4
+python-dotenv>=1.0.0
+pydantic>=1.10.0,<2.0.0
+langchain>=0.0.325
+arxiv>=1.4.8
+PyPDF2>=3.0.0
+requests>=2.31.0
+beautifulsoup4>=4.12.2
+langgraph>=0.0.15
+setuptools>=65.5.1
+openai>=1.3.0
+aiohttp>=3.8.0
+tiktoken>=0.5.2
+plotly>=5.18.0
+
+# PDF and Vector DB dependencies
+pypdf>=4.0.1
+unstructured>=0.10.0
+pdf2image>=1.16.0
+pytesseract>=0.3.0
+
+# Ollama support
+llama-cpp-python>=0.2.0
+llama-index>=0.9.27
+
+# LlamaParse with optimized dependencies
+llama_cloud_services>=0.1.0
+cachetools>=5.3.0
+aiocache>=0.12.0
+orjson>=3.9.0
+
+# Streaming support
+aiohttp>=3.8.0
