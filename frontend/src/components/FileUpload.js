@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { uploadDocument, uploadDocumentAsync, streamDocumentStatus, getDocumentStatus } from '../services/api';
+import { uploadDocumentAsync, streamDocumentStatus, getDocumentStatus } from '../services/api';
 
 const FileUpload = () => {
   const [file, setFile] = useState(null);

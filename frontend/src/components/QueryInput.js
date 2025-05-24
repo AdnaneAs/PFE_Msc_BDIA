@@ -38,20 +38,18 @@ const QueryInput = ({ onQueryResult }) => {
         setOllamaModels(['llama3.2:latest']);
       }
     };
-    
     fetchOllamaModels();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   // Fetch LLM status initially and after queries
   useEffect(() => {
     fetchLlmStatus();
-    
     // Set up interval to fetch status every 10 seconds
     const intervalId = setInterval(fetchLlmStatus, 10000);
-    
     // Clean up interval
     return () => clearInterval(intervalId);
-  }, []);
+  }, [selectedOllamaModel]);
   
   const fetchLlmStatus = async () => {
     try {
@@ -302,9 +300,6 @@ const QueryInput = ({ onQueryResult }) => {
     });
     
     try {
-      // Start timestamp for performance measurement
-      const startTime = Date.now();
-      
       // Get current model configuration
       const modelConfig = getCurrentModelConfig();
       
@@ -320,12 +315,13 @@ const QueryInput = ({ onQueryResult }) => {
       
       console.log("Normal query complete. Result:", result);
       
-      // Explicitly ensure the answer is passed to the parent component
       if (result) {
         onQueryResult({
           ...result,
           streaming: false
         });
+      } else {
+        onQueryResult({ error: true, message: 'No result returned from backend.' });
       }
       
       // Fetch updated LLM status after query completion
@@ -337,6 +333,7 @@ const QueryInput = ({ onQueryResult }) => {
         state: 'error',
         message: 'Failed to get an answer'
       });
+      onQueryResult({ error: true, message: err.message || 'Error submitting query' }); 
     } finally {
       setLoading(false);
     }

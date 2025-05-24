@@ -7,10 +7,23 @@ from typing import Dict, Any, List, Optional, AsyncIterator
 import requests
 import aiohttp
 from functools import lru_cache
+import datetime
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging with more detailed formatting
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    datefmt='%Y-%m-%d %H:%M:%S'
+)
+
+# Create a dedicated logger for the LLM service
 logger = logging.getLogger(__name__)
+
+# Add a file handler to log to a file
+os.makedirs('logs', exist_ok=True)
+file_handler = logging.FileHandler(f'logs/llm_service_{datetime.datetime.now().strftime("%Y%m%d")}.log')
+file_handler.setFormatter(logging.Formatter('%(asctime)s - %(name)s - %(levelname)s - %(message)s'))
+logger.addHandler(file_handler)
 
 # Placeholder for LLM API key and endpoints
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
@@ -349,7 +362,8 @@ def get_answer_from_llm(question: str, context_documents: List[str], model_confi
     Returns:
         tuple: (answer, model_info)
     """
-    logger.info(f"Getting answer for question: {question[:50]}...")
+    # Log the entire question for better tracking
+    logger.info(f"Getting answer for question: '{question}'")
     logger.info(f"Using {len(context_documents)} context documents")
     
     if model_config:
@@ -380,6 +394,10 @@ def get_answer_from_llm(question: str, context_documents: List[str], model_confi
         answer, model_info = query_gemini_llm(prompt, model_config)
     else:  # Default to Ollama
         answer, model_info = query_ollama_llm(prompt, model_config)
+    
+    # Log the complete model response for better tracking
+    logger.info(f"LLM response: '{answer[:200]}...' (truncated)")
+    logger.info(f"Model info: {model_info}")
     
     # Cache the result
     if answer:

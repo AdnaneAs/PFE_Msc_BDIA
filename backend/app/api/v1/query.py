@@ -4,6 +4,7 @@ from app.models import QueryRequest, QueryResponse, LLMStatusResponse, Streaming
 from app.services.embedding_service import generate_embedding
 from app.services.vector_db_service import query_documents
 from app.services.llm_service import get_answer_from_llm, get_answer_from_llm_async, get_llm_status, get_streaming_response, get_available_models
+from app.services.metrics_service import QueryMetricsTracker
 import time
 import json
 import logging
@@ -23,15 +24,17 @@ async def query(request: QueryRequest):
     """
     Query the documents with a question and get an answer from the LLM
     """
+    # Initialize metrics tracker
+    metrics = QueryMetricsTracker(request.question, request.config_for_model)
+    
     try:
-        start_time = time.time()
-        
-        # Log the request with model configuration
-        logger.info(f"Query request: {request.question}")
-        if request.model_config:
-            logger.info(f"Model config: {request.model_config}")
+        # Enhanced logging of the query request
+        logger.info(f"Received query request - Question: '{request.question}'")
+        if request.config_for_model:
+            logger.info(f"Model configuration: {json.dumps(request.config_for_model)}")
         
         # Generate embedding for the question
+        metrics.mark_retrieval_start()
         query_embedding = generate_embedding(request.question)
         
         # Query ChromaDB for relevant documents
@@ -40,36 +43,52 @@ async def query(request: QueryRequest):
         documents = query_results["documents"]
         metadatas = query_results["metadatas"]
         
-        retrieval_time = time.time() - start_time
+        # Mark the end of retrieval and log metrics
+        metrics.mark_retrieval_end(len(documents))
+        logger.info(f"Document retrieval completed, found {len(documents)} relevant documents")
         
         if not documents:
+            logger.warning(f"No relevant documents found for query: '{request.question}'")
+            metrics.complete()
             return QueryResponse(
                 answer="I couldn't find any relevant information to answer your question. Please try a different question or upload more documents.",
                 sources=[],
-                query_time_ms=int(retrieval_time * 1000),
+                query_time_ms=metrics.complete()["total_time_ms"],
                 num_sources=0
             )
             
         # Get answer from LLM using the specified model configuration
-        llm_start_time = time.time()
-        answer, model_info = get_answer_from_llm(request.question, documents, request.model_config)
-        llm_time = time.time() - llm_start_time
+        metrics.mark_llm_start()
+        answer, model_info = get_answer_from_llm(request.question, documents, request.config_for_model)
         
-        total_time = time.time() - start_time
+        # Mark the end of LLM processing and log metrics
+        metrics.mark_llm_end(model_info, len(answer) if answer else 0)
+        
+        # Log the complete response for better tracking
+        logger.info(f"Query completed - Model: {model_info}")
+        
+        # Get final metrics and complete the tracking
+        final_metrics = metrics.complete()
         
         # Return response with answer, sources, and timing information
         return QueryResponse(
             answer=answer,
             sources=metadatas,
-            query_time_ms=int(total_time * 1000),
-            retrieval_time_ms=int(retrieval_time * 1000),
-            llm_time_ms=int(llm_time * 1000),
+            query_time_ms=final_metrics["total_time_ms"],
+            retrieval_time_ms=final_metrics["retrieval_time_ms"],
+            llm_time_ms=final_metrics["llm_time_ms"],
             num_sources=len(documents),
             model=model_info
         )
         
     except Exception as e:
-        logger.error(f"Error processing query: {str(e)}", exc_info=True)
+        # Enhanced error logging
+        logger.error(f"Error processing query: '{request.question}'", exc_info=True)
+        logger.error(f"Error details: {str(e)}")
+        
+        # Track the error in metrics
+        metrics.mark_error(str(e))
+        
         raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
 
 
@@ -81,15 +100,17 @@ async def stream_query(request: QueryRequest):
     """
     Query the documents and stream the response from the LLM as it's generated
     """
+    # Initialize metrics tracker
+    metrics = QueryMetricsTracker(request.question, request.config_for_model)
+    
     try:
-        start_time = time.time()
-        
-        # Log the streaming request
-        logger.info(f"Streaming query request: {request.question}")
-        if request.model_config:
-            logger.info(f"Model config: {request.model_config}")
+        # Enhanced logging of streaming request
+        logger.info(f"Received streaming query request - Question: '{request.question}'")
+        if request.config_for_model:
+            logger.info(f"Model configuration: {json.dumps(request.config_for_model)}")
         
         # Generate embedding for the question
+        metrics.mark_retrieval_start()
         query_embedding = generate_embedding(request.question)
         
         # Query ChromaDB for relevant documents
@@ -98,13 +119,20 @@ async def stream_query(request: QueryRequest):
         documents = query_results["documents"]
         metadatas = query_results["metadatas"]
         
-        retrieval_time = time.time() - start_time
+        # Mark retrieval completion
+        metrics.mark_retrieval_end(len(documents))
+        logger.info(f"Document retrieval completed, found {len(documents)} relevant documents")
         
         if not documents:
             error_response = {
                 "error": True,
                 "message": "No relevant documents found to answer your question."
             }
+            logger.warning(f"No relevant documents found for streaming query: '{request.question}'")
+            
+            # Track completion in metrics
+            metrics.complete()
+            
             return StreamingResponse(
                 iter([json.dumps(error_response)]),
                 media_type="text/event-stream",
@@ -119,30 +147,63 @@ async def stream_query(request: QueryRequest):
         # Start streaming response
         async def event_generator():
             try:
+                # Log streaming start
+                logger.info(f"Starting to stream response for query: '{request.question}'")
+                
                 # First send the metadata about the query
                 metadata = {
                     "metadata": True,
                     "num_sources": len(documents),
                     "sources": metadatas,
-                    "retrieval_time_ms": int(retrieval_time * 1000)
+                    "retrieval_time_ms": metrics.complete()["retrieval_time_ms"]
                 }
                 yield f"data: {json.dumps(metadata)}\n\n"
                 
+                # Mark LLM processing start
+                metrics.mark_llm_start()
+                
+                # Track tokens for logging
+                token_count = 0
+                response_buffer = ""
+                
                 # Stream the response from the LLM with model configuration
-                async for token in get_streaming_response(request.question, documents, request.model_config):
+                async for token in get_streaming_response(request.question, documents, request.config_for_model):
+                    token_count += 1
+                    response_buffer += token
+                    
+                    # Log progress periodically
+                    if token_count % 100 == 0:
+                        logger.info(f"Streamed {token_count} tokens so far")
+                    
                     yield f"data: {json.dumps({'token': token})}\n\n"
                 
+                # Mark LLM processing completion
+                metrics.mark_llm_end("streaming", len(response_buffer))
+                
+                # Get final metrics
+                final_metrics = metrics.complete()
+                
                 # Send completion message with timing
-                total_time = time.time() - start_time
                 completion = {
                     "complete": True,
-                    "query_time_ms": int(total_time * 1000),
+                    "query_time_ms": final_metrics["total_time_ms"],
                     "final_token": ""  # Include an empty final token to avoid missing the last chunk
                 }
+                
+                # Log completion of streaming
+                logger.info(f"Completed streaming response with {token_count} tokens")
+                logger.info(f"First 200 chars of response: '{response_buffer[:200]}...' (truncated)")
+                
                 yield f"data: {json.dumps(completion)}\n\n"
                 
             except Exception as e:
-                logger.error(f"Error streaming response: {str(e)}", exc_info=True)
+                # Enhanced error logging
+                logger.error(f"Error streaming response for query: '{request.question}'", exc_info=True)
+                logger.error(f"Error details: {str(e)}")
+                
+                # Track error in metrics
+                metrics.mark_error(str(e))
+                
                 error_msg = f"Error streaming response: {str(e)}"
                 yield f"data: {json.dumps({'error': True, 'message': error_msg})}\n\n"
         
@@ -158,8 +219,14 @@ async def stream_query(request: QueryRequest):
         )
         
     except Exception as e:
-        logger.error(f"Error setting up streaming: {str(e)}", exc_info=True)
-        raise HTTPException(status_code=500, detail=f"Error processing query: {str(e)}")
+        # Enhanced error logging
+        logger.error(f"Error setting up streaming for query: '{request.question}'", exc_info=True)
+        logger.error(f"Error details: {str(e)}")
+        
+        # Track error in metrics
+        metrics.mark_error(str(e))
+        
+        raise HTTPException(status_code=500, detail=f"Error setting up streaming response: {str(e)}")
 
 
 @router.get(

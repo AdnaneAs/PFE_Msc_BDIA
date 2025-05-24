@@ -163,8 +163,12 @@ export const streamDocumentStatus = (docId) => {
  */
 export const submitQuery = async (question, modelConfig = {}) => {
   try {
-    console.log(`Submitting query: ${question}`);
+    // Log the query request
+    console.log(`Submitting query: "${question}"`);
     console.log(`Using model config:`, modelConfig);
+    
+    // Start time for performance tracking
+    const startTime = performance.now();
     
     const response = await fetch(`${API_BASE_URL}/api/query`, {
       method: 'POST',
@@ -173,16 +177,36 @@ export const submitQuery = async (question, modelConfig = {}) => {
       },
       body: JSON.stringify({ 
         question,
-        model_config: modelConfig
+        config_for_model: modelConfig  // Updated to match the backend model field name
       }),
     });
     
+    // Calculate round-trip time
+    const requestTime = performance.now() - startTime;
+    console.log(`Query round-trip time: ${requestTime.toFixed(2)}ms`);
+    
     const result = await handleApiResponse(response);
-    console.log(`Query response received, answer length: ${result.answer ? result.answer.length : 0}`);
+    
+    // Log detailed response information
+    console.log(`Query response received:
+- Answer length: ${result.answer ? result.answer.length : 0} characters
+- Response time: ${result.query_time_ms}ms
+- Model used: ${result.model}
+- Sources: ${result.num_sources}
+`);
+    
     return result;
   } catch (error) {
-    console.error('Error submitting query:', error);
-    throw error;
+    console.error(`Error submitting query "${question}":`, error);
+    // Return a structured error to be displayed in the UI
+    return {
+      error: true,
+      message: error.message || 'Failed to get a response from the server',
+      answer: 'Error: ' + (error.message || 'An unexpected error occurred'),
+      query_time_ms: 0,
+      sources: [],
+      num_sources: 0
+    };
   }
 };
 
@@ -205,31 +229,144 @@ export const getLLMStatus = async () => {
  * Creates an EventSource for streaming query responses
  * @param {string} question - The question to ask
  * @param {Object} modelConfig - Configuration for the LLM model
- * @returns {EventSource} An EventSource object for streaming the response
+ * @returns {Object} An object containing the EventSource and methods to manage it
  */
 export const streamQuery = (question, modelConfig = {}) => {
   try {
-    console.log(`Setting up streaming for query: ${question}`);
-    console.log(`Using model config for streaming:`, modelConfig);
+    console.log(`Creating streaming query for: "${question}"`);
+    console.log(`Using model config:`, modelConfig);
     
-    // URL encode the question and model config
-    const encodedQuestion = encodeURIComponent(question);
-    const encodedConfig = encodeURIComponent(JSON.stringify(modelConfig));
+    // Create a controller to manually abort the stream if needed
+    const controller = new AbortController();
     
-    const eventSource = new EventSource(
-      `${API_BASE_URL}/api/query/stream?question=${encodedQuestion}&model_config=${encodedConfig}`
-    );
-    
-    // Add error handler for EventSource
-    eventSource.onerror = (error) => {
-      console.error('Query stream error:', error);
-      eventSource.close();
+    // Prepare the query data
+    const queryData = {
+      question,
+      config_for_model: modelConfig  // Updated to match the backend model field name
     };
     
-    return eventSource;
+    // Create a unique URL for the stream to avoid caching issues
+    const url = new URL(`${API_BASE_URL}/api/query/stream`);
+    url.searchParams.append('_t', Date.now()); // Add a timestamp
+    
+    // Set up the fetch request for streaming
+    const fetchPromise = fetch(url, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify(queryData),
+      signal: controller.signal
+    });
+    
+    // Track the complete response
+    let completeResponse = '';
+    let sources = [];
+    let metadata = null;
+    
+    // Create an event emitter to handle stream events
+    const eventEmitter = {
+      listeners: {},
+      on(event, callback) {
+        if (!this.listeners[event]) {
+          this.listeners[event] = [];
+        }
+        this.listeners[event].push(callback);
+      },
+      emit(event, data) {
+        if (this.listeners[event]) {
+          this.listeners[event].forEach(callback => callback(data));
+        }
+      }
+    };
+    
+    // Start the stream handling
+    fetchPromise.then(response => {
+      if (!response.ok) {
+        throw new Error(`HTTP error! Status: ${response.status}`);
+      }
+      
+      // Get the reader from the response body
+      const reader = response.body.getReader();
+      const decoder = new TextDecoder();
+      
+      // Log the stream start
+      console.log(`Stream started for query: "${question}"`);
+      
+      // Function to process the stream
+      function processStream() {
+        reader.read().then(({ done, value }) => {
+          if (done) {
+            console.log('Stream complete');
+            eventEmitter.emit('complete', { 
+              answer: completeResponse,
+              sources,
+              metadata
+            });
+            return;
+          }
+          
+          // Decode the chunk and process the events
+          const chunk = decoder.decode(value, { stream: true });
+          const events = chunk.split('\n\n').filter(Boolean);
+          
+          events.forEach(event => {
+            if (event.startsWith('data: ')) {
+              try {
+                const data = JSON.parse(event.substring(6));
+                
+                // Handle different types of messages
+                if (data.metadata) {
+                  // Metadata about the query
+                  metadata = data;
+                  sources = data.sources;
+                  eventEmitter.emit('metadata', data);
+                } else if (data.token) {
+                  // A token of the streaming response
+                  completeResponse += data.token;
+                  eventEmitter.emit('token', data.token);
+                } else if (data.complete) {
+                  // Stream is complete
+                  eventEmitter.emit('complete', { 
+                    answer: completeResponse,
+                    sources,
+                    metadata,
+                    query_time_ms: data.query_time_ms
+                  });
+                } else if (data.error) {
+                  // Error occurred
+                  eventEmitter.emit('error', new Error(data.message));
+                }
+              } catch (e) {
+                console.error('Error parsing event data:', e);
+                eventEmitter.emit('error', e);
+              }
+            }
+          });
+          
+          // Continue reading
+          processStream();
+        }).catch(error => {
+          console.error('Error reading stream:', error);
+          eventEmitter.emit('error', error);
+        });
+      }
+      
+      // Start processing the stream
+      processStream();
+    }).catch(error => {
+      console.error('Error setting up stream:', error);
+      eventEmitter.emit('error', error);
+    });
+    
+    // Return the stream controller and event emitter
+    return {
+      abort: () => controller.abort(),
+      events: eventEmitter
+    };
   } catch (error) {
-    console.error('Error creating query EventSource:', error);
-    throw new Error('Failed to connect to query stream');
+    console.error('Error creating query stream:', error);
+    throw error;
   }
 };
 
