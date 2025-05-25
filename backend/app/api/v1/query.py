@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from fastapi.responses import StreamingResponse
-from app.models import QueryRequest, QueryResponse, LLMStatusResponse, StreamingQueryRequest
+from app.models.query_models import QueryRequest, QueryResponse, LLMStatusResponse, StreamingQueryRequest
 from app.services.embedding_service import generate_embedding
 from app.services.vector_db_service import query_documents
 from app.services.llm_service import get_answer_from_llm, get_answer_from_llm_async, get_llm_status, get_streaming_response, get_available_models

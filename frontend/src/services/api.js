@@ -397,3 +397,56 @@ export const fetchStreamingQuery = async (question) => {
     throw error;
   }
 };
+
+/**
+ * Gets a list of all documents in the system
+ * @returns {Promise<Array>} List of document objects
+ * @throws {Error} If the API call fails
+ */
+export const getDocuments = async () => {
+  try {
+    console.log('Fetching document list');
+    const response = await fetch(`${API_BASE_URL}/api/documents/`);
+    const data = await handleApiResponse(response);
+    return data.documents || [];
+  } catch (error) {
+    console.error('Error fetching documents:', error);
+    throw error;
+  }
+};
+
+/**
+ * Gets details for a specific document
+ * @param {number} documentId - The document ID
+ * @returns {Promise<Object>} Document details
+ * @throws {Error} If the API call fails
+ */
+export const getDocumentById = async (documentId) => {
+  try {
+    console.log(`Fetching document details for ID: ${documentId}`);
+    const response = await fetch(`${API_BASE_URL}/api/documents/${documentId}`);
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error(`Error fetching document ${documentId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Deletes a document from the system
+ * @param {number} documentId - The document ID to delete
+ * @returns {Promise<Object>} Response with success message
+ * @throws {Error} If the API call fails
+ */
+export const deleteDocument = async (documentId) => {
+  try {
+    console.log(`Deleting document with ID: ${documentId}`);
+    const response = await fetch(`${API_BASE_URL}/api/documents/${documentId}`, {
+      method: 'DELETE',
+    });
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error(`Error deleting document ${documentId}:`, error);
+    throw error;
+  }
+};

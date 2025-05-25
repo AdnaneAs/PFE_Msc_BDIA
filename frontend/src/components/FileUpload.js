@@ -1,14 +1,18 @@
-import React, { useState, useEffect, useRef } from 'react';
+import React, { useState, useEffect, useRef, useCallback } from 'react';
 import { uploadDocumentAsync, streamDocumentStatus, getDocumentStatus } from '../services/api';
+import { FiUpload, FiFile, FiCheck, FiX, FiLoader } from 'react-icons/fi';
 
-const FileUpload = () => {
+const FileUpload = ({ onUploadComplete }) => {
   const [file, setFile] = useState(null);
   const [uploading, setUploading] = useState(false);
   const [uploadResult, setUploadResult] = useState(null);
   const [error, setError] = useState(null);
   const [processingStatus, setProcessingStatus] = useState(null);
   const [debugInfo, setDebugInfo] = useState([]);
+  const [dragActive, setDragActive] = useState(false);
+  
   const eventSourceRef = useRef(null);
+  const fileInputRef = useRef(null);
 
   // Cleanup event source on component unmount
   useEffect(() => {
@@ -177,44 +181,94 @@ const FileUpload = () => {
     }
   };
 
-  const handleFileChange = (e) => {
-    const selectedFile = e.target.files[0];
-    setFile(selectedFile);
-    setError(null);
-    setUploadResult(null);
-    setProcessingStatus(null);
-    clearDebugLogs();
+  // Handle drag events for the drop zone
+  const handleDrag = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
     
-    if (selectedFile) {
-      addDebugEntry(`Selected file: ${selectedFile.name} (${(selectedFile.size / 1024).toFixed(2)} KB)`, 'blue');
+    if (e.type === 'dragenter' || e.type === 'dragover') {
+      setDragActive(true);
+    } else if (e.type === 'dragleave') {
+      setDragActive(false);
+    }
+  }, []);
+  
+  // Handle drop event
+  const handleDrop = useCallback((e) => {
+    e.preventDefault();
+    e.stopPropagation();
+    setDragActive(false);
+    
+    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
+      const droppedFile = e.dataTransfer.files[0];
+      handleFileSelection(droppedFile);
+    }
+  }, []);
+  
+  // Handle file input change
+  const handleFileChange = (e) => {
+    if (e.target.files && e.target.files[0]) {
+      const selectedFile = e.target.files[0];
+      handleFileSelection(selectedFile);
     }
   };
-
+  
+  // Common function to handle file selection from either drop or input
+  const handleFileSelection = (selectedFile) => {
+    // Check file type
+    const fileType = selectedFile.type;
+    const validTypes = [
+      'application/pdf', 
+      'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
+      'text/plain',
+      'text/csv',
+      'application/vnd.ms-excel',
+      'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
+    ];
+    
+    if (!validTypes.includes(fileType)) {
+      setError('Invalid file type. Please upload a PDF, DOCX, or TXT file.');
+      setFile(null);
+      return;
+    }
+    
+    // Check file size (limit to 10MB)
+    if (selectedFile.size > 10 * 1024 * 1024) {
+      setError('File is too large. Maximum size is 10MB.');
+      setFile(null);
+      return;
+    }
+    
+    setFile(selectedFile);
+    setError(null);
+  };
+  
+  // Trigger file input click
+  const handleButtonClick = () => {
+    fileInputRef.current.click();
+  };
+  
+  // Handle file upload
   const handleUpload = async () => {
     if (!file) {
-      setError('Please select a file to upload');
+      setError('Please select a file first');
       return;
     }
-
-    if (!file.name.toLowerCase().endsWith('.pdf')) {
-      setError('Only PDF files are supported');
-      return;
-    }
-
-    setUploading(true);
-    setError(null);
-    clearDebugLogs();
-    setProcessingStatus({
-      status: 'starting',
-      message: 'Starting upload...',
-      progress: 0
-    });
-    
-    // Add first debug entry
-    addDebugEntry('Upload process started', 'blue');
-    addDebugEntry(`Uploading file: ${file.name}`, 'blue');
     
     try {
+      setUploading(true);
+      setError(null);
+      clearDebugLogs();
+      setProcessingStatus({
+        status: 'starting',
+        message: 'Starting upload...',
+        progress: 0
+      });
+      
+      // Add first debug entry
+      addDebugEntry('Upload process started', 'blue');
+      addDebugEntry(`Uploading file: ${file.name}`, 'blue');
+      
       // Use async upload for better progress tracking
       const result = await uploadDocumentAsync(file);
       
@@ -231,52 +285,121 @@ const FileUpload = () => {
           progress: 25,
           docId: result.doc_id
         });
+        
+        // Show upload initiated success message
+        setUploadResult({
+          filename: file.name,
+          chunks_added: 0,
+          status: 'pending'
+        });
+        
+        // Notify parent component if callback exists
+        if (onUploadComplete) {
+          onUploadComplete(result.doc_id);
+        }
       } else {
         throw new Error('Invalid response from server');
       }
-    } catch (error) {
-      console.error('Upload error:', error);
-      setError(error.message || 'Failed to upload document');
-      addDebugEntry(`Upload error: ${error.message}`, 'red');
+    } catch (err) {
+      console.error('Upload failed:', err);
+      setError(err.message || 'Failed to upload the file');
+      addDebugEntry(`Upload error: ${err.message}`, 'red');
       setUploading(false);
     }
   };
 
+  // Get file extension for display
+  const getFileExtension = (filename) => {
+    return filename?.split('.').pop().toUpperCase() || '';
+  };
+  
+  // Get appropriate file type display
+  const getFileTypeDisplay = (file) => {
+    if (!file) return '';
+    
+    const extension = getFileExtension(file.name);
+    let fileType = extension;
+    
+    if (file.type === 'application/pdf') {
+      fileType = 'PDF';
+    } else if (file.type === 'application/vnd.openxmlformats-officedocument.wordprocessingml.document') {
+      fileType = 'DOCX';
+    } else if (file.type === 'text/plain') {
+      fileType = 'TXT';
+    }
+    
+    return fileType;
+  };
+
   return (
     <div className="bg-white shadow-md rounded-lg p-6 mb-6">
-      <h2 className="text-xl font-semibold text-gray-800 mb-4">Document Upload</h2>
+      <h2 className="text-xl font-semibold text-gray-800 mb-4">Upload Documents</h2>
       
-      <div className="mb-4">
-        <label className="block text-sm font-medium text-gray-700 mb-2">
-          Select a PDF document to upload
-        </label>
+      {/* Drag & Drop Zone */}
+      <div 
+        className={`border-2 border-dashed rounded-lg p-8 mb-4 text-center transition-colors
+          ${dragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}`}
+        onDragEnter={handleDrag}
+        onDragLeave={handleDrag}
+        onDragOver={handleDrag}
+        onDrop={handleDrop}
+      >
+        <div className="flex flex-col items-center justify-center">
+          <FiUpload className="text-4xl text-blue-500 mb-3" />
+          <p className="text-gray-700 mb-2">
+            Drag and drop your file here, or{" "}
+            <button
+              type="button"
+              className="text-blue-500 hover:text-blue-700 font-medium"
+              onClick={handleButtonClick}
+            >
+              browse
+            </button>
+          </p>
+          <p className="text-sm text-gray-500">
+            Supported formats: PDF, DOCX, TXT (Max 10MB)
+          </p>
+        </div>
+        
         <input
-          id="file-upload"
+          ref={fileInputRef}
           type="file"
-          accept=".pdf"
+          accept=".pdf,.docx,.txt,.csv,.xls,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           onChange={handleFileChange}
-          className="block w-full text-sm text-gray-500
-                    file:mr-4 file:py-2 file:px-4
-                    file:rounded-md file:border-0
-                    file:text-sm file:font-semibold
-                    file:bg-blue-50 file:text-blue-700
-                    hover:file:bg-blue-100"
+          className="hidden"
         />
       </div>
       
-      <div>
-        <button
-          onClick={handleUpload}
-          disabled={!file || uploading}
-          className={`px-4 py-2 rounded-md font-medium text-white ${
-            !file || uploading
-              ? 'bg-gray-400 cursor-not-allowed'
-              : 'bg-blue-600 hover:bg-blue-700'
-          }`}
-        >
-          {uploading ? 'Uploading...' : 'Upload Document'}
-        </button>
-      </div>
+      {/* Selected File Info */}
+      {file && (
+        <div className="flex items-center p-3 bg-gray-50 rounded-md mb-4">
+          <div className="w-10 h-10 flex items-center justify-center bg-blue-100 rounded-md mr-3">
+            <FiFile className="text-blue-600" />
+          </div>
+          <div className="flex-1">
+            <p className="font-medium text-gray-800">{file.name}</p>
+            <p className="text-sm text-gray-500">
+              {getFileTypeDisplay(file)} · {(file.size / 1024).toFixed(1)} KB
+            </p>
+          </div>
+          <button
+            type="button"
+            onClick={() => setFile(null)}
+            className="p-1 text-gray-500 hover:text-red-500"
+            title="Remove file"
+          >
+            <FiX />
+          </button>
+        </div>
+      )}
+      
+      {/* Error Message */}
+      {error && (
+        <div className="p-3 mb-4 bg-red-50 border border-red-100 text-red-700 rounded-md flex items-center">
+          <FiX className="mr-2 flex-shrink-0" />
+          <span>{error}</span>
+        </div>
+      )}
       
       {/* Processing status display */}
       {processingStatus && (
@@ -312,18 +435,21 @@ const FileUpload = () => {
         </div>
       )}
       
-      {error && (
-        <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md">
-          {error}
-        </div>
-      )}
-      
-      {uploadResult && (
-        <div className="mt-4 p-3 bg-green-50 border border-green-200 text-green-700 rounded-md">
-          <p><strong>{uploadResult.filename}</strong> processed successfully.</p>
-          <p>{uploadResult.chunks_added} text chunks extracted and indexed.</p>
-        </div>
-      )}
+      {/* Upload Button */}
+      <div className="flex justify-end">
+        <button
+          type="button"
+          onClick={handleUpload}
+          disabled={!file || uploading}
+          className={`px-4 py-2 rounded-md font-medium text-white ${
+            !file || uploading
+              ? 'bg-gray-400 cursor-not-allowed'
+              : 'bg-blue-600 hover:bg-blue-700'
+          }`}
+        >
+          {uploading ? 'Uploading...' : 'Upload Document'}
+        </button>
+      </div>
     </div>
   );
 };

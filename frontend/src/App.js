@@ -3,12 +3,14 @@ import { fetchHelloMessage } from './services/api';
 import FileUpload from './components/FileUpload';
 import QueryInput from './components/QueryInput';
 import ResultDisplay from './components/ResultDisplay';
+import DocumentList from './components/DocumentList';
 
 function App() {
   const [message, setMessage] = useState('');
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [queryResult, setQueryResult] = useState(null);
+  const [refreshDocuments, setRefreshDocuments] = useState(0);
 
   useEffect(() => {
     async function fetchData() {
@@ -24,7 +26,9 @@ function App() {
     }
 
     fetchData();
-  }, []);  // Handle query results including streaming updates
+  }, []);
+  
+  // Handle query results including streaming updates
   const handleQueryResult = (result) => {
     console.log("App received query result:", result);
     if (result) {
@@ -34,12 +38,19 @@ function App() {
       setQueryResult(null);
     }
   };
+  
+  // Handle document upload completion to trigger a documents list refresh
+  const handleUploadComplete = (documentId) => {
+    console.log(`Document upload initiated, ID: ${documentId}`);
+    // Trigger a refresh of the documents list
+    setRefreshDocuments(prev => prev + 1);
+  };
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
       <div className="container mx-auto px-4">
         <header className="mb-8 text-center">
-          <h1 className="text-3xl font-bold text-gray-800">Audit Report Generation Platform v0.1.0</h1>
+          <h1 className="text-3xl font-bold text-gray-800">Audit Report Generation Platform v0.2.0</h1>
           {loading ? (
             <p className="text-gray-500">Connecting to backend...</p>
           ) : error ? (
@@ -51,7 +62,8 @@ function App() {
 
         <main>
           <div className="grid grid-cols-1 gap-6">
-            <FileUpload />
+            <FileUpload onUploadComplete={handleUploadComplete} />
+            <DocumentList refreshTrigger={refreshDocuments} />
             <QueryInput onQueryResult={handleQueryResult} />
             <ResultDisplay result={queryResult} />
           </div>

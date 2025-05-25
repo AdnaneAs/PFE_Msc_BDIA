@@ -2,12 +2,21 @@ from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
 
 from app.api.v1 import documents, query
+from app.database.db_setup import init_db
+import logging
+
+# Configure logging
+logging.basicConfig(
+    level=logging.INFO,
+    format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+)
+logger = logging.getLogger(__name__)
 
 # Create FastAPI app instance
 app = FastAPI(
     title="Audit Report Generation Platform",
     description="Multi-Modal RAG System for Audit Report Generation",
-    version="0.1.0",
+    version="0.2.0",  # Updated version number
 )
 
 # Configure CORS to allow requests from the React frontend
@@ -32,6 +41,7 @@ app.include_router(query.router, prefix="/api/query", tags=["query"])
 # Add startup event to initialize services
 @app.on_event("startup")
 async def startup_event():
-    # This is where we can initialize services that need to be started when the app starts
-    # For example, we could initialize the embedding model here
-    pass
+    # Initialize the SQLite database
+    logger.info("Initializing services...")
+    await init_db()
+    logger.info("Services initialized successfully")

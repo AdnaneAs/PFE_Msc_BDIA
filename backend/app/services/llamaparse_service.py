@@ -7,6 +7,9 @@ import asyncio
 from functools import partial
 import json
 import time
+import logging
+import httpx
+from dotenv import load_dotenv
 
 from app.config import LLAMAPARSE_API_KEY
 
@@ -21,6 +24,15 @@ _parser = None
 
 # Progress tracking dict to store processing status
 processing_status = {}
+
+# Configure logging
+logger = logging.getLogger(__name__)
+
+# Load environment variables
+load_dotenv()
+
+# Configuration
+LLAMAPARSE_API_URL = os.getenv("LLAMAPARSE_API_URL", "https://api.llamaparse.com/v1/parse")
 
 def get_parser():
     """Get or create a LlamaParse parser instance"""
@@ -42,6 +54,60 @@ def update_processing_status(doc_id: str, status: Dict[str, Any]):
 def get_processing_status(doc_id: str) -> Dict[str, Any]:
     """Get the current processing status for a document"""
     return processing_status.get(doc_id, {"status": "unknown"})
+
+async def parse_document(file_path: str, file_type: str) -> Optional[str]:
+    """
+    Parse a document using LlamaParse API.
+    
+    Args:
+        file_path: Path to the document file
+        file_type: Type of document (pdf, docx, txt)
+    
+    Returns:
+        Parsed text content or None if parsing failed
+    """
+    if not LLAMAPARSE_API_KEY:
+        logger.error("LLAMAPARSE_API_KEY is not set in environment variables")
+        return None
+        
+    try:
+        # Different parsing strategy based on file type
+        if file_type == "txt":
+            # For text files, just read the content
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read()
+        
+        # For PDF and DOCX, use LlamaParse API
+        logger.info(f"Parsing {file_type} document: {file_path}")
+        
+        with open(file_path, "rb") as file:
+            files = {"file": (os.path.basename(file_path), file)}
+            
+            # Prepare headers with API key
+            headers = {
+                "X-API-Key": LLAMAPARSE_API_KEY
+            }
+            
+            # Make the API request
+            async with httpx.AsyncClient(timeout=300) as client:  # 5-minute timeout
+                response = await client.post(
+                    LLAMAPARSE_API_URL,
+                    files=files,
+                    headers=headers
+                )
+                
+            # Check if request was successful
+            if response.status_code == 200:
+                # Parse the JSON response
+                result = response.json()
+                return result.get("text", "")
+            else:
+                logger.error(f"LlamaParse API error: {response.status_code} - {response.text}")
+                return None
+                
+    except Exception as e:
+        logger.error(f"Error parsing document {file_path}: {str(e)}")
+        return None
 
 async def parse_pdf_document(file: UploadFile, doc_id: str) -> str:
     """

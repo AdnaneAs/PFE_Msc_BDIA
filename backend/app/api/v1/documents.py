@@ -1,11 +1,13 @@
-from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Response, status
-from fastapi.responses import StreamingResponse
-from typing import Dict, Any, List
+from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Path, Query, status
+from fastapi.responses import JSONResponse, StreamingResponse
+from typing import List, Optional, Dict, Any
 import asyncio
 import uuid
 import json
 
-from app.models import DocumentUploadResponse
+from app.models.document_models import DocumentUploadResponse, DocumentResponse, DocumentList
+from app.services.document_service import handle_document_upload
+from app.database.db_setup import get_all_documents, get_document_by_id, delete_document
 from app.services.llamaparse_service import (
     parse_pdf_document, 
     process_pdf_in_background, 
@@ -18,69 +20,92 @@ from app.services.vector_db_service import add_documents
 
 router = APIRouter()
 
-
 @router.post(
-    "/upload",
+    "/upload", 
     response_model=DocumentUploadResponse,
-    summary="Upload and process a document"
+    summary="Upload a document for processing"
 )
 async def upload_document(
     file: UploadFile = File(...),
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
-    Upload a PDF document, parse it, chunk it, generate embeddings, and store in vector DB
-    """
-    if not file.filename.endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    Upload a document (PDF, DOCX, or TXT) for processing.
     
+    The document will be:
+    1. Validated for file type
+    2. Saved to disk
+    3. Processed in the background
+    4. Parsed with LlamaParse
+    5. Chunked and stored in the vector database
+    
+    Returns a document ID that can be used to check processing status.
+    """
     try:
-        # Generate a unique ID for this document
-        doc_id = f"{file.filename}-{uuid.uuid4()}"
-        
-        # Parse the document with LlamaParse
-        markdown_content = await parse_pdf_document(file, doc_id=doc_id)
-        
-        # Reset file position for reading again if needed
-        await file.seek(0)
-        
-        # Chunk the text
-        chunks = chunk_text(markdown_content)
-        
-        if not chunks:
-            raise HTTPException(status_code=500, detail="Failed to extract any text chunks from the document")
-        
-        # Generate embeddings for each chunk
-        chunk_embeddings = generate_embeddings(chunks)
-        
-        # Create metadata for each chunk
-        metadatas = [{
-            "filename": file.filename,
-            "chunk_index": i,
-            "total_chunks": len(chunks),
-            "doc_id": doc_id
-        } for i in range(len(chunks))]
-        
-        # Add documents to ChromaDB
-        add_documents(
-            texts=chunks,
-            embeddings=chunk_embeddings,
-            metadatas=metadatas
-        )
-        
-        return DocumentUploadResponse(
-            filename=file.filename,
-            status="processed",
-            chunks_added=len(chunks),
-            doc_id=doc_id
-        )
-        
-    except HTTPException as e:
-        # Re-raise HTTP exceptions
-        raise
+        result = await handle_document_upload(file, background_tasks)
+        return DocumentUploadResponse(**result)
+    except ValueError as e:
+        # This is for expected errors like unsupported file types
+        raise HTTPException(status_code=400, detail=str(e))
     except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing document: {str(e)}")
+        # This is for unexpected errors
+        raise HTTPException(status_code=500, detail=f"Error uploading document: {str(e)}")
 
+@router.get(
+    "/", 
+    response_model=DocumentList,
+    summary="Get all documents"
+)
+async def get_documents():
+    """
+    Retrieve a list of all documents and their processing status.
+    
+    Returns metadata for all documents in the system, ordered by upload time (newest first).
+    """
+    try:
+        documents = await get_all_documents()
+        return DocumentList(documents=documents)
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving documents: {str(e)}")
+
+@router.get(
+    "/{document_id}", 
+    response_model=DocumentResponse,
+    summary="Get document by ID"
+)
+async def get_document(
+    document_id: int = Path(..., description="The ID of the document to retrieve")
+):
+    """
+    Retrieve metadata for a specific document by its ID.
+    """
+    document = await get_document_by_id(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail=f"Document with ID {document_id} not found")
+    return document
+
+@router.delete(
+    "/{document_id}",
+    summary="Delete a document"
+)
+async def remove_document(
+    document_id: int = Path(..., description="The ID of the document to delete")
+):
+    """
+    Delete a document from the system by its ID.
+    
+    Note: This only removes the document metadata record. The actual document file
+    and its vector embeddings are not deleted in this implementation.
+    """
+    document = await get_document_by_id(document_id)
+    if not document:
+        raise HTTPException(status_code=404, detail=f"Document with ID {document_id} not found")
+    
+    success = await delete_document(document_id)
+    if not success:
+        raise HTTPException(status_code=500, detail=f"Failed to delete document with ID {document_id}")
+    
+    return {"message": f"Document with ID {document_id} successfully deleted"}
 
 @router.post(
     "/upload/async",
@@ -154,7 +179,6 @@ async def upload_document_async(
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error starting document processing: {str(e)}")
 
-
 @router.get(
     "/status/{doc_id}",
     summary="Get processing status for a document"
@@ -167,7 +191,6 @@ async def get_document_status(doc_id: str):
     if status["status"] == "unknown":
         raise HTTPException(status_code=404, detail="Document not found or processing hasn't started")
     return status
-
 
 @router.get(
     "/status/stream/{doc_id}",
