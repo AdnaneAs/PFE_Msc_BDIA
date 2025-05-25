@@ -3,6 +3,7 @@ from typing import List
 import numpy as np
 from sentence_transformers import SentenceTransformer
 from app.config import EMBEDDING_MODEL_NAME
+import torch
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -20,10 +21,15 @@ def get_embedding_model():
     """
     global _model
     if _model is None:
-        logger.info(f"Loading embedding model: {EMBEDDING_MODEL_NAME}")
-        _model = SentenceTransformer(EMBEDDING_MODEL_NAME)
-        # Log model information
+        # Check if CUDA is available
+        device = "cuda:0" if torch.cuda.is_available() else "cpu"
+        logger.info(f"Loading embedding model: {EMBEDDING_MODEL_NAME} on device: {device}")
+        
+        _model = SentenceTransformer(EMBEDDING_MODEL_NAME, device=device)
+        
+        # Log model information and device
         logger.info(f"Embedding model loaded successfully. Dimensions: {_model.get_sentence_embedding_dimension()}")
+        logger.info(f"Using device: {_model.device}")
     return _model
 
 def generate_embeddings(texts: List[str]) -> List[List[float]]:
