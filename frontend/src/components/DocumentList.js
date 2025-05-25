@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getDocuments, deleteDocument } from '../services/api';
-import { FiFileText, FiTrash2, FiRefreshCw, FiAlertCircle, FiClock, FiCheckCircle, FiX } from 'react-icons/fi';
+import { FiFileText, FiTrash2, FiRefreshCw, FiAlertCircle, FiClock, FiCheckCircle, FiX, FiDatabase } from 'react-icons/fi';
 
 const DocumentList = ({ refreshTrigger }) => {
   const [documents, setDocuments] = useState([]);
@@ -87,7 +87,7 @@ const DocumentList = ({ refreshTrigger }) => {
   };
 
   // Get status badge for document
-  const StatusBadge = ({ status }) => {
+  const StatusBadge = ({ status, chunkCount }) => {
     if (!status) return null;
     
     let bgColor, textColor, icon, label;
@@ -111,6 +111,12 @@ const DocumentList = ({ refreshTrigger }) => {
         icon = <FiCheckCircle className="mr-1" />;
         label = 'Completed';
         break;
+      case 'vectorized':
+        bgColor = 'bg-purple-100';
+        textColor = 'text-purple-800';
+        icon = <FiDatabase className="mr-1" />;
+        label = 'Vectorized';
+        break;
       case 'failed':
         bgColor = 'bg-red-100';
         textColor = 'text-red-800';
@@ -125,10 +131,17 @@ const DocumentList = ({ refreshTrigger }) => {
     }
     
     return (
-      <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${bgColor} ${textColor}`}>
-        {icon}
-        {label}
-      </span>
+      <div className="group relative">
+        <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${bgColor} ${textColor}`}>
+          {icon}
+          {label}
+        </span>
+        {chunkCount > 0 && (
+          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">
+            {chunkCount} chunks in vector DB
+          </div>
+        )}
+      </div>
     );
   };
 
@@ -202,19 +215,19 @@ const DocumentList = ({ refreshTrigger }) => {
           <table className="min-w-full divide-y divide-gray-200">
             <thead className="bg-gray-50">
               <tr>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Document
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Uploaded
-                </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Status
                 </th>
-                <th scope="col" className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
-                  Info
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Size
                 </th>
-                <th scope="col" className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
+                <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                  Uploaded
+                </th>
+                <th className="px-6 py-3 text-right text-xs font-medium text-gray-500 uppercase tracking-wider">
                   Actions
                 </th>
               </tr>
@@ -224,51 +237,40 @@ const DocumentList = ({ refreshTrigger }) => {
                 <tr key={doc.id} className="hover:bg-gray-50">
                   <td className="px-6 py-4 whitespace-nowrap">
                     <div className="flex items-center">
-                      <div className="flex-shrink-0 h-10 w-10 flex items-center justify-center bg-blue-100 rounded-md text-blue-700">
-                        <FiFileText size={20} />
-                      </div>
+                      <FiFileText className="flex-shrink-0 h-5 w-5 text-gray-400" />
                       <div className="ml-4">
-                        <div className="text-sm font-medium text-gray-900" title={doc.original_name}>
-                          {doc.original_name || doc.filename}
+                        <div className="text-sm font-medium text-gray-900">
+                          {doc.original_name}
                         </div>
                         <div className="text-sm text-gray-500">
-                          {doc.file_type.toUpperCase()} · {formatFileSize(doc.file_size)}
+                          {doc.file_type}
                         </div>
                       </div>
                     </div>
                   </td>
+                  <td className="px-6 py-4 whitespace-nowrap">
+                    <StatusBadge status={doc.status} chunkCount={doc.chunk_count} />
+                  </td>
+                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                    {formatFileSize(doc.file_size)}
+                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
                     {formatDate(doc.uploaded_at)}
                   </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <StatusBadge status={doc.status} />
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {doc.status === 'completed' ? (
-                      <span>{doc.chunk_count} chunks</span>
-                    ) : doc.status === 'failed' ? (
-                      <span className="text-red-600" title={doc.error_message}>
-                        {doc.error_message || 'Unknown error'}
-                      </span>
-                    ) : (
-                      <span>-</span>
-                    )}
-                  </td>
                   <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
                     {deleteConfirm === doc.id ? (
-                      <div className="flex items-center justify-end space-x-2">
-                        <span className="text-xs text-red-600">Confirm?</span>
+                      <div className="flex justify-end space-x-2">
                         <button
                           onClick={() => handleDelete(doc.id)}
                           className="text-red-600 hover:text-red-900"
                         >
-                          Yes
+                          Confirm
                         </button>
                         <button
                           onClick={() => setDeleteConfirm(null)}
-                          className="text-gray-500 hover:text-gray-700"
+                          className="text-gray-600 hover:text-gray-900"
                         >
-                          No
+                          Cancel
                         </button>
                       </div>
                     ) : (
@@ -276,7 +278,7 @@ const DocumentList = ({ refreshTrigger }) => {
                         onClick={() => setDeleteConfirm(doc.id)}
                         className="text-red-600 hover:text-red-900"
                       >
-                        <FiTrash2 />
+                        <FiTrash2 className="h-5 w-5" />
                       </button>
                     )}
                   </td>

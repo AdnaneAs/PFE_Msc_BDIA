@@ -137,4 +137,44 @@ def query_documents(
         "metadatas": metadatas,
         "distances": distances,
         "ids": ids
-    } 
+    }
+
+def get_all_vectorized_documents(collection_name: str = "documents") -> List[Dict[str, Any]]:
+    """
+    Get all documents from the vector database with their metadata
+    
+    Args:
+        collection_name: Name of the collection
+        
+    Returns:
+        List[Dict[str, Any]]: List of documents with their metadata
+    """
+    # Get collection
+    collection = get_collection(collection_name)
+    
+    # Get all documents
+    results = collection.get()
+    
+    # Process results
+    documents = results.get("documents", [])
+    metadatas = results.get("metadatas", [])
+    ids = results.get("ids", [])
+    
+    # Combine documents with their metadata
+    vectorized_docs = []
+    seen_files = set()  # To track unique files
+    
+    for doc, metadata, doc_id in zip(documents, metadatas, ids):
+        filename = metadata.get("filename", "unknown")
+        if filename not in seen_files:
+            seen_files.add(filename)
+            vectorized_docs.append({
+                "filename": filename,
+                "doc_id": doc_id,
+                "chunk_count": metadata.get("total_chunks", 1),
+                "uploaded_at": metadata.get("uploaded_at", ""),
+                "status": "processed"
+            })
+    
+    logger.info(f"Retrieved {len(vectorized_docs)} unique documents from vector database")
+    return vectorized_docs 

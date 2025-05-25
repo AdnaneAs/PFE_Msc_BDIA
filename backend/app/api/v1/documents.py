@@ -8,6 +8,7 @@ import json
 from app.models.document_models import DocumentUploadResponse, DocumentResponse, DocumentList
 from app.services.document_service import handle_document_upload
 from app.database.db_setup import get_all_documents, get_document_by_id, delete_document
+from app.services.vector_db_service import get_all_vectorized_documents
 from app.services.llamaparse_service import (
     parse_pdf_document, 
     process_pdf_in_background, 
@@ -59,12 +60,40 @@ async def upload_document(
 async def get_documents():
     """
     Retrieve a list of all documents and their processing status.
+    This includes both documents in the SQLite database and documents in the vector database.
     
     Returns metadata for all documents in the system, ordered by upload time (newest first).
     """
     try:
-        documents = await get_all_documents()
-        return DocumentList(documents=documents)
+        # Get documents from SQLite database
+        sqlite_documents = await get_all_documents()
+        
+        # Get documents from vector database
+        vector_documents = get_all_vectorized_documents()
+        
+        # Create a set of filenames from vector database for quick lookup
+        vector_filenames = {doc["filename"] for doc in vector_documents}
+        
+        # Update SQLite documents with vector database status
+        for doc in sqlite_documents:
+            if doc.filename in vector_filenames:
+                doc.status = "vectorized"
+        
+        # Add any documents that are only in vector database
+        for vec_doc in vector_documents:
+            if not any(doc.filename == vec_doc["filename"] for doc in sqlite_documents):
+                sqlite_documents.append(DocumentResponse(
+                    id=vec_doc["doc_id"],
+                    filename=vec_doc["filename"],
+                    file_type="unknown",  # We don't store this in vector DB
+                    status="vectorized",
+                    original_name=vec_doc["filename"],
+                    file_size=0,  # We don't store this in vector DB
+                    uploaded_at=vec_doc["uploaded_at"],
+                    chunk_count=vec_doc["chunk_count"]
+                ))
+        
+        return DocumentList(documents=sqlite_documents)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving documents: {str(e)}")
 

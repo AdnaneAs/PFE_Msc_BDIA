@@ -405,10 +405,12 @@ export const fetchStreamingQuery = async (question) => {
  */
 export const getDocuments = async () => {
   try {
-    console.log('Fetching document list');
-    const response = await fetch(`${API_BASE_URL}/api/documents/`);
-    const data = await handleApiResponse(response);
-    return data.documents || [];
+    const response = await fetch(`${API_BASE_URL}/api/documents`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch documents');
+    }
+    const data = await response.json();
+    return data.documents || [];  // Access the documents array from the response
   } catch (error) {
     console.error('Error fetching documents:', error);
     throw error;
