@@ -38,10 +38,13 @@ function App() {
       setQueryResult(null);
     }
   };
-  
-  // Handle document upload completion to trigger a documents list refresh
-  const handleUploadComplete = (documentId) => {
-    console.log(`Document upload initiated, ID: ${documentId}`);
+    // Handle document upload completion to trigger a documents list refresh
+  const handleUploadComplete = (documentIds) => {
+    if (Array.isArray(documentIds)) {
+      console.log(`Multiple documents uploaded, IDs: ${documentIds.join(', ')}`);
+    } else {
+      console.log(`Document upload initiated, ID: ${documentIds}`);
+    }
     // Trigger a refresh of the documents list
     setRefreshDocuments(prev => prev + 1);
   };

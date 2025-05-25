@@ -3,23 +3,25 @@ import { uploadDocumentAsync, streamDocumentStatus, getDocumentStatus } from '..
 import { FiUpload, FiFile, FiCheck, FiX, FiLoader } from 'react-icons/fi';
 
 const FileUpload = ({ onUploadComplete }) => {
-  const [file, setFile] = useState(null);
+  const [files, setFiles] = useState([]);
   const [uploading, setUploading] = useState(false);
-  const [uploadResult, setUploadResult] = useState(null);
+  const [uploadResults, setUploadResults] = useState([]);
   const [error, setError] = useState(null);
-  const [processingStatus, setProcessingStatus] = useState(null);
+  const [processingStatus, setProcessingStatus] = useState({});
   const [debugInfo, setDebugInfo] = useState([]);
   const [dragActive, setDragActive] = useState(false);
   
-  const eventSourceRef = useRef(null);
+  const eventSourceRefs = useRef({});
   const fileInputRef = useRef(null);
 
-  // Cleanup event source on component unmount
+  // Cleanup event sources on component unmount
   useEffect(() => {
     return () => {
-      if (eventSourceRef.current) {
-        eventSourceRef.current.close();
-      }
+      Object.values(eventSourceRefs.current).forEach(eventSource => {
+        if (eventSource) {
+          eventSource.close();
+        }
+      });
     };
   }, []);
 
@@ -74,110 +76,198 @@ const FileUpload = ({ onUploadComplete }) => {
   };
 
   // Setup fallback polling when streaming fails
-  const setupStatusPolling = (docId) => {
-    addDebugEntry('Setting up status polling', 'blue');
+  const setupStatusPolling = (docId, fileName) => {
+    addDebugEntry(`Setting up status polling for ${fileName}`, 'blue');
     
     const pollInterval = setInterval(async () => {
       try {
         const status = await getDocumentStatus(docId);
         
         // Process the status
-        setProcessingStatus(status);
+        setProcessingStatus(prev => ({
+          ...prev,
+          [docId]: status
+        }));
+        
         const statusColor = getStatusColor(status.status);
-        addDebugEntry(`Poll Status: ${status.status} - ${status.message}`, statusColor);
+        addDebugEntry(`Poll Status for ${fileName}: ${status.status} - ${status.message}`, statusColor);
         
         if (status.status === 'completed') {
-          setUploadResult({
-            filename: status.filename,
-            chunks_added: status.total_chunks || 0,
-            status: 'processed'
+          setUploadResults(prev => {
+            const updatedResults = [...prev];
+            const resultIndex = updatedResults.findIndex(result => result.docId === docId);
+            
+            if (resultIndex !== -1) {
+              updatedResults[resultIndex] = {
+                ...updatedResults[resultIndex],
+                filename: status.filename,
+                chunks_added: status.total_chunks || 0,
+                status: 'processed'
+              };
+            }
+            
+            return updatedResults;
           });
-          addDebugEntry(`Processing completed: ${status.filename}`, 'green');
+          
+          addDebugEntry(`Processing completed for ${fileName}`, 'green');
           clearInterval(pollInterval);
-          setUploading(false);
+          
+          // Check if all files are processed
+          checkAllFilesProcessed();
         } else if (status.status === 'error') {
-          setError(status.message || 'An error occurred during processing');
-          addDebugEntry(`Error: ${status.message}`, 'red');
+          setUploadResults(prev => {
+            const updatedResults = [...prev];
+            const resultIndex = updatedResults.findIndex(result => result.docId === docId);
+            
+            if (resultIndex !== -1) {
+              updatedResults[resultIndex] = {
+                ...updatedResults[resultIndex],
+                status: 'error',
+                error: status.message || 'An error occurred during processing'
+              };
+            }
+            
+            return updatedResults;
+          });
+          
+          addDebugEntry(`Error processing ${fileName}: ${status.message}`, 'red');
           clearInterval(pollInterval);
-          setUploading(false);
+          
+          // Check if all files are processed or errored
+          checkAllFilesProcessed();
         }
       } catch (pollError) {
-        addDebugEntry(`Error polling for status: ${pollError.message}`, 'red');
-        console.error('Error polling for status:', pollError);
+        addDebugEntry(`Error polling for status of ${fileName}: ${pollError.message}`, 'red');
+        console.error(`Error polling for status of ${fileName}:`, pollError);
         clearInterval(pollInterval);
-        setUploading(false);
+        
+        // Check if all files are processed or errored
+        checkAllFilesProcessed();
       }
     }, 2000); // Poll every 2 seconds
     
     return pollInterval;
   };
 
-  const setupEventSource = (docId) => {
+  const setupEventSource = (docId, fileName) => {
     try {
-      addDebugEntry(`Setting up event source for ${docId}`, 'blue');
+      addDebugEntry(`Setting up event source for ${fileName} (${docId})`, 'blue');
       
       // Create new event source for status updates
       const eventSource = streamDocumentStatus(docId);
-      eventSourceRef.current = eventSource;
+      eventSourceRefs.current[docId] = eventSource;
       
       // Handle incoming messages
       eventSource.onmessage = (event) => {
         try {
           const statusData = JSON.parse(event.data);
-          setProcessingStatus(statusData);
+          setProcessingStatus(prev => ({
+            ...prev,
+            [docId]: statusData
+          }));
           
           // Add to debug info based on status
           const statusColor = getStatusColor(statusData.status);
-          addDebugEntry(`Stream Status: ${statusData.status} - ${statusData.message}`, statusColor);
+          addDebugEntry(`Stream Status for ${fileName}: ${statusData.status} - ${statusData.message}`, statusColor);
           
           // When processing is complete, set the upload result
           if (statusData.status === 'completed') {
-            setUploadResult({
-              filename: statusData.filename,
-              chunks_added: statusData.total_chunks || 0,
-              status: 'processed'
+            setUploadResults(prev => {
+              const updatedResults = [...prev];
+              const resultIndex = updatedResults.findIndex(result => result.docId === docId);
+              
+              if (resultIndex !== -1) {
+                updatedResults[resultIndex] = {
+                  ...updatedResults[resultIndex],
+                  filename: statusData.filename,
+                  chunks_added: statusData.total_chunks || 0,
+                  status: 'processed'
+                };
+              }
+              
+              return updatedResults;
             });
             
-            addDebugEntry(`Processing completed: ${statusData.filename}`, 'green');
+            addDebugEntry(`Processing completed for ${fileName}`, 'green');
             
             // Close the event source
             eventSource.close();
-            eventSourceRef.current = null;
-            setUploading(false);
+            delete eventSourceRefs.current[docId];
+            
+            // Check if all files are processed
+            checkAllFilesProcessed();
           } else if (statusData.status === 'error') {
-            setError(statusData.message || 'An error occurred during processing');
-            addDebugEntry(`Error: ${statusData.message}`, 'red');
+            setUploadResults(prev => {
+              const updatedResults = [...prev];
+              const resultIndex = updatedResults.findIndex(result => result.docId === docId);
+              
+              if (resultIndex !== -1) {
+                updatedResults[resultIndex] = {
+                  ...updatedResults[resultIndex],
+                  status: 'error',
+                  error: statusData.message || 'An error occurred during processing'
+                };
+              }
+              
+              return updatedResults;
+            });
+            
+            addDebugEntry(`Error processing ${fileName}: ${statusData.message}`, 'red');
             eventSource.close();
-            eventSourceRef.current = null;
-            setUploading(false);
+            delete eventSourceRefs.current[docId];
+            
+            // Check if all files are processed or errored
+            checkAllFilesProcessed();
           }
         } catch (parseError) {
-          addDebugEntry(`Error parsing status data: ${parseError.message}`, 'red');
-          console.error('Error parsing status data:', parseError, event.data);
+          addDebugEntry(`Error parsing status data for ${fileName}: ${parseError.message}`, 'red');
+          console.error(`Error parsing status data for ${fileName}:`, parseError, event.data);
         }
       };
       
       // Handle errors
       eventSource.onerror = (error) => {
-        setError('Error connecting to status stream - falling back to polling');
-        addDebugEntry('Connection to status stream failed, using polling instead', 'red');
+        setError(`Error connecting to status stream for ${fileName} - falling back to polling`);
+        addDebugEntry(`Connection to status stream failed for ${fileName}, using polling instead`, 'red');
         
         // Close the event source
         eventSource.close();
-        eventSourceRef.current = null;
+        delete eventSourceRefs.current[docId];
         
         // Fall back to polling
-        setupStatusPolling(docId);
+        setupStatusPolling(docId, fileName);
       };
       
       return eventSource;
     } catch (streamError) {
-      setError('Failed to create status stream connection');
-      addDebugEntry(`Error creating stream: ${streamError.message}`, 'red');
+      setError(`Failed to create status stream connection for ${fileName}`);
+      addDebugEntry(`Error creating stream for ${fileName}: ${streamError.message}`, 'red');
       
       // Fall back to polling
-      setupStatusPolling(docId);
+      setupStatusPolling(docId, fileName);
       return null;
+    }
+  };
+
+  // Check if all files have been processed
+  const checkAllFilesProcessed = () => {
+    const allProcessed = uploadResults.every(result => 
+      result.status === 'processed' || result.status === 'error'
+    );
+    
+    if (allProcessed && uploadResults.length > 0) {
+      setUploading(false);
+      
+      // Call the completion callback with all successful document IDs
+      if (onUploadComplete) {
+        const successfulDocIds = uploadResults
+          .filter(result => result.status === 'processed')
+          .map(result => result.docId);
+        
+        if (successfulDocIds.length > 0) {
+          onUploadComplete(successfulDocIds);
+        }
+      }
     }
   };
 
@@ -199,24 +289,26 @@ const FileUpload = ({ onUploadComplete }) => {
     e.stopPropagation();
     setDragActive(false);
     
-    if (e.dataTransfer.files && e.dataTransfer.files[0]) {
-      const droppedFile = e.dataTransfer.files[0];
-      handleFileSelection(droppedFile);
+    if (e.dataTransfer.files && e.dataTransfer.files.length > 0) {
+      const droppedFiles = Array.from(e.dataTransfer.files);
+      handleFilesSelection(droppedFiles);
     }
   }, []);
   
   // Handle file input change
   const handleFileChange = (e) => {
-    if (e.target.files && e.target.files[0]) {
-      const selectedFile = e.target.files[0];
-      handleFileSelection(selectedFile);
+    if (e.target.files && e.target.files.length > 0) {
+      const selectedFiles = Array.from(e.target.files);
+      handleFilesSelection(selectedFiles);
     }
   };
   
   // Common function to handle file selection from either drop or input
-  const handleFileSelection = (selectedFile) => {
-    // Check file type
-    const fileType = selectedFile.type;
+  const handleFilesSelection = (selectedFiles) => {
+    const validFiles = [];
+    const errorMessages = [];
+    
+    // Define valid file types
     const validTypes = [
       'application/pdf', 
       'application/vnd.openxmlformats-officedocument.wordprocessingml.document', 
@@ -226,21 +318,30 @@ const FileUpload = ({ onUploadComplete }) => {
       'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet'
     ];
     
-    if (!validTypes.includes(fileType)) {
-      setError('Invalid file type. Please upload a PDF, DOCX, or TXT file.');
-      setFile(null);
-      return;
+    // Validate each file
+    selectedFiles.forEach(file => {
+      // Check file type
+      if (!validTypes.includes(file.type)) {
+        errorMessages.push(`${file.name}: Invalid file type. Please upload a PDF, DOCX, TXT, CSV, XLS, or XLSX file.`);
+        return;
+      }
+      
+      // Check file size (limit to 10MB)
+      if (file.size > 10 * 1024 * 1024) {
+        errorMessages.push(`${file.name}: File is too large. Maximum size is 10MB.`);
+        return;
+      }
+      
+      validFiles.push(file);
+    });
+    
+    if (errorMessages.length > 0) {
+      setError(errorMessages.join('\n'));
+    } else {
+      setError(null);
     }
     
-    // Check file size (limit to 10MB)
-    if (selectedFile.size > 10 * 1024 * 1024) {
-      setError('File is too large. Maximum size is 10MB.');
-      setFile(null);
-      return;
-    }
-    
-    setFile(selectedFile);
-    setError(null);
+    setFiles(validFiles);
   };
   
   // Trigger file input click
@@ -248,10 +349,18 @@ const FileUpload = ({ onUploadComplete }) => {
     fileInputRef.current.click();
   };
   
-  // Handle file upload
+  // Remove file from list
+  const removeFile = (index) => {
+    setFiles(prevFiles => {
+      const newFiles = [...prevFiles];
+      newFiles.splice(index, 1);
+      return newFiles;
+    });
+  };
+    // Handle file upload
   const handleUpload = async () => {
-    if (!file) {
-      setError('Please select a file first');
+    if (files.length === 0) {
+      setError('Please select at least one file first');
       return;
     }
     
@@ -259,52 +368,107 @@ const FileUpload = ({ onUploadComplete }) => {
       setUploading(true);
       setError(null);
       clearDebugLogs();
-      setProcessingStatus({
-        status: 'starting',
-        message: 'Starting upload...',
-        progress: 0
-      });
+      setUploadResults([]);
+      setProcessingStatus({});
       
       // Add first debug entry
       addDebugEntry('Upload process started', 'blue');
-      addDebugEntry(`Uploading file: ${file.name}`, 'blue');
+      addDebugEntry(`Uploading ${files.length} file(s)`, 'blue');
+      
+      // Upload each file in parallel
+      const uploadPromises = files.map(async (file, index) => {
+        try {
+          addDebugEntry(`Starting upload for ${file.name}`, 'blue');
+          
+          // Use async upload for better progress tracking
+          const result = await uploadDocumentAsync(file);
+          
+          if (result && result.doc_id) {
+            addDebugEntry(`Upload successful for ${file.name}. Document ID: ${result.doc_id}`, 'green');
+            
+            // Set up event source for real-time updates
+            setupEventSource(result.doc_id, file.name);
+            
+            // Initialize upload result for this file
+            return {
+              filename: file.name,
+              docId: result.doc_id,
+              chunks_added: 0,
+              status: 'pending'
+            };
+          } else {
+            throw new Error('Invalid response from server');
+          }
+        } catch (fileError) {
+          addDebugEntry(`Error uploading ${file.name}: ${fileError.message}`, 'red');
+          return {
+            filename: file.name,
+            status: 'error',
+            error: fileError.message || 'Failed to upload the file'
+          };
+        }
+      });
+      
+      try {
+        // Wait for all uploads to initialize
+        const results = await Promise.all(uploadPromises);
+        setUploadResults(results);
+        
+        // Check if all uploads failed
+        const allFailed = results.every(result => result.status === 'error');
+        if (allFailed) {
+          setUploading(false);
+          setError('All file uploads failed. Please check the debug info for details.');
+        }
+      } catch (promiseErr) {
+        // This catches errors in the Promise.all itself
+        addDebugEntry(`Error in batch processing: ${promiseErr.message}`, 'red');
+        setError('Failed to process some files. You can retry uploading them individually.');
+        setUploading(false);
+      }
+    } catch (err) {
+      console.error('Upload process failed:', err);
+      setError(err.message || 'Failed to upload files');
+      addDebugEntry(`Upload process error: ${err.message}`, 'red');
+      setUploading(false);
+    }
+  };
+
+  // Retry uploading a failed file
+  const retryFileUpload = async (file, index) => {
+    try {
+      setError(null);
+      addDebugEntry(`Retrying upload for ${file.name}`, 'blue');
       
       // Use async upload for better progress tracking
       const result = await uploadDocumentAsync(file);
       
       if (result && result.doc_id) {
-        addDebugEntry(`Upload successful. Document ID: ${result.doc_id}`, 'green');
+        addDebugEntry(`Retry successful for ${file.name}. Document ID: ${result.doc_id}`, 'green');
         
         // Set up event source for real-time updates
-        setupEventSource(result.doc_id);
+        setupEventSource(result.doc_id, file.name);
         
-        // Update status
-        setProcessingStatus({
-          status: 'uploaded',
-          message: 'Document uploaded. Processing started...',
-          progress: 25,
-          docId: result.doc_id
+        // Update upload result for this file
+        setUploadResults(prev => {
+          const updatedResults = [...prev];
+          updatedResults[index] = {
+            filename: file.name,
+            docId: result.doc_id,
+            chunks_added: 0,
+            status: 'pending'
+          };
+          return updatedResults;
         });
         
-        // Show upload initiated success message
-        setUploadResult({
-          filename: file.name,
-          chunks_added: 0,
-          status: 'pending'
-        });
-        
-        // Notify parent component if callback exists
-        if (onUploadComplete) {
-          onUploadComplete(result.doc_id);
-        }
+        return true;
       } else {
         throw new Error('Invalid response from server');
       }
-    } catch (err) {
-      console.error('Upload failed:', err);
-      setError(err.message || 'Failed to upload the file');
-      addDebugEntry(`Upload error: ${err.message}`, 'red');
-      setUploading(false);
+    } catch (fileError) {
+      addDebugEntry(`Error retrying ${file.name}: ${fileError.message}`, 'red');
+      setError(`Failed to retry ${file.name}: ${fileError.message}`);
+      return false;
     }
   };
 
@@ -326,9 +490,23 @@ const FileUpload = ({ onUploadComplete }) => {
       fileType = 'DOCX';
     } else if (file.type === 'text/plain') {
       fileType = 'TXT';
+    } else if (file.type === 'text/csv') {
+      fileType = 'CSV';
+    } else if (file.type === 'application/vnd.ms-excel') {
+      fileType = 'XLS';
+    } else if (file.type === 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet') {
+      fileType = 'XLSX';
     }
     
     return fileType;
+  };
+
+  // Clear all files
+  const clearAllFiles = () => {
+    setFiles([]);
+    setUploadResults([]);
+    setProcessingStatus({});
+    setError(null);
   };
 
   return (
@@ -347,7 +525,7 @@ const FileUpload = ({ onUploadComplete }) => {
         <div className="flex flex-col items-center justify-center">
           <FiUpload className="text-4xl text-blue-500 mb-3" />
           <p className="text-gray-700 mb-2">
-            Drag and drop your file here, or{" "}
+            Drag and drop your files here, or{" "}
             <button
               type="button"
               className="text-blue-500 hover:text-blue-700 font-medium"
@@ -357,66 +535,150 @@ const FileUpload = ({ onUploadComplete }) => {
             </button>
           </p>
           <p className="text-sm text-gray-500">
-            Supported formats: PDF, DOCX, TXT (Max 10MB)
+            Supported formats: PDF, DOCX, TXT, CSV, XLS, XLSX (Max 10MB per file)
           </p>
         </div>
         
         <input
           ref={fileInputRef}
           type="file"
+          multiple
           accept=".pdf,.docx,.txt,.csv,.xls,.xlsx,application/pdf,application/vnd.openxmlformats-officedocument.wordprocessingml.document,text/plain,text/csv,application/vnd.ms-excel,application/vnd.openxmlformats-officedocument.spreadsheetml.sheet"
           onChange={handleFileChange}
           className="hidden"
         />
       </div>
-      
-      {/* Selected File Info */}
-      {file && (
-        <div className="flex items-center p-3 bg-gray-50 rounded-md mb-4">
-          <div className="w-10 h-10 flex items-center justify-center bg-blue-100 rounded-md mr-3">
-            <FiFile className="text-blue-600" />
+        {/* Selected Files Info */}
+      {files.length > 0 && (
+        <div className="mb-4">
+          <div className="flex justify-between items-center mb-2">
+            <h3 className="text-sm font-medium text-gray-700">
+              {files.length} file{files.length !== 1 ? 's' : ''} selected
+            </h3>
+            <button
+              type="button"
+              onClick={clearAllFiles}
+              className="text-xs text-red-500 hover:text-red-700"
+              disabled={uploading}
+            >
+              Clear All
+            </button>
           </div>
-          <div className="flex-1">
-            <p className="font-medium text-gray-800">{file.name}</p>
-            <p className="text-sm text-gray-500">
-              {getFileTypeDisplay(file)} · {(file.size / 1024).toFixed(1)} KB
-            </p>
+          <div className="space-y-2">
+            {files.map((file, index) => (
+              <div key={index} className="flex items-center p-3 bg-gray-50 rounded-md">
+                <div className="w-10 h-10 flex items-center justify-center bg-blue-100 rounded-md mr-3">
+                  <FiFile className="text-blue-600" />
+                </div>
+                <div className="flex-1">
+                  <p className="font-medium text-gray-800">{file.name}</p>
+                  <p className="text-sm text-gray-500">
+                    {getFileTypeDisplay(file)} · {(file.size / 1024).toFixed(1)} KB
+                  </p>
+                </div>
+                <button
+                  type="button"
+                  onClick={() => removeFile(index)}
+                  className="p-1 text-gray-500 hover:text-red-500"
+                  title="Remove file"
+                  disabled={uploading}
+                >
+                  <FiX />
+                </button>
+              </div>
+            ))}
           </div>
-          <button
-            type="button"
-            onClick={() => setFile(null)}
-            className="p-1 text-gray-500 hover:text-red-500"
-            title="Remove file"
-          >
-            <FiX />
-          </button>
         </div>
       )}
       
       {/* Error Message */}
       {error && (
-        <div className="p-3 mb-4 bg-red-50 border border-red-100 text-red-700 rounded-md flex items-center">
-          <FiX className="mr-2 flex-shrink-0" />
-          <span>{error}</span>
+        <div className="p-3 mb-4 bg-red-50 border border-red-100 text-red-700 rounded-md flex items-start">
+          <FiX className="mr-2 flex-shrink-0 mt-1" />
+          <div className="whitespace-pre-line">{error}</div>
+        </div>
+      )}
+        {/* Processing status display for each file */}
+      {Object.entries(processingStatus).length > 0 && (
+        <div className="mt-4 space-y-4">
+          <h3 className="text-sm font-medium text-gray-700">Processing Status</h3>
+          {uploadResults.map((result, index) => {
+            const status = processingStatus[result.docId];
+            
+            // For files with error status but no processingStatus entry
+            if (result.status === 'error' && !status) {
+              return (
+                <div key={index} className="border border-red-200 rounded-md p-3">
+                  <div className="flex justify-between mb-1">
+                    <span className="text-sm font-medium text-gray-700">{result.filename}</span>
+                    <button 
+                      onClick={() => {
+                        const file = files.find(f => f.name === result.filename);
+                        if (file) retryFileUpload(file, index);
+                      }}
+                      className="text-xs bg-blue-500 hover:bg-blue-600 text-white py-1 px-2 rounded"
+                      disabled={uploading}
+                    >
+                      Retry
+                    </button>
+                  </div>
+                  <div className="w-full bg-gray-200 rounded-full h-2.5 mb-1">
+                    <div className="h-2.5 rounded-full bg-red-500" style={{ width: '100%' }}></div>
+                  </div>
+                  <p className="text-xs text-red-500">{result.error || 'Upload failed'}</p>
+                </div>
+              );
+            }
+            
+            if (!status) return null;
+            
+            return (
+              <div key={index} className="border border-gray-200 rounded-md p-3">
+                <div className="flex justify-between mb-1">
+                  <span className="text-sm font-medium text-gray-700">{result.filename}</span>
+                  <div className="flex items-center">
+                    <span className="text-sm font-medium text-gray-700 mr-2">
+                      {status.progress}%
+                    </span>
+                    {status.status === 'error' && (
+                      <button 
+                        onClick={() => {
+                          const file = files.find(f => f.name === result.filename);
+                          if (file) retryFileUpload(file, index);
+                        }}
+                        className="text-xs bg-blue-500 hover:bg-blue-600 text-white py-1 px-2 rounded"
+                        disabled={uploading}
+                      >
+                        Retry
+                      </button>
+                    )}
+                  </div>
+                </div>
+                <div className="w-full bg-gray-200 rounded-full h-2.5 mb-1">
+                  <div 
+                    className={`h-2.5 rounded-full ${getProgressColor(status.status)}`} 
+                    style={{ width: `${status.progress}%` }}
+                  ></div>
+                </div>
+                <p className="text-xs text-gray-500">{status.message}</p>
+              </div>
+            );
+          })}
         </div>
       )}
       
-      {/* Processing status display */}
-      {processingStatus && (
-        <div className="mt-4">
-          <div className="flex justify-between mb-1">
-            <span className="text-sm font-medium text-gray-700">
-              {processingStatus.message}
-            </span>
-            <span className="text-sm font-medium text-gray-700">
-              {processingStatus.progress}%
-            </span>
-          </div>
-          <div className="w-full bg-gray-200 rounded-full h-2.5">
-            <div 
-              className={`h-2.5 rounded-full ${getProgressColor(processingStatus.status)}`} 
-              style={{ width: `${processingStatus.progress}%` }}
-            ></div>
+      {/* Summary of processing results */}
+      {uploadResults.length > 0 && !uploading && (
+        <div className="mt-4 p-3 bg-blue-50 border border-blue-100 text-blue-800 rounded-md mb-4">
+          <p className="font-semibold mb-2">Upload Summary</p>
+          <div className="text-sm">
+            <p>
+              {uploadResults.filter(r => r.status === 'processed').length} of {uploadResults.length} files successfully processed
+              {uploadResults.filter(r => r.status === 'error').length > 0 && ` (${uploadResults.filter(r => r.status === 'error').length} failed)`}
+            </p>
+            <p className="mt-1">
+              Total chunks added to knowledge base: {uploadResults.reduce((sum, r) => sum + (r.chunks_added || 0), 0)}
+            </p>
           </div>
         </div>
       )}
@@ -440,14 +702,14 @@ const FileUpload = ({ onUploadComplete }) => {
         <button
           type="button"
           onClick={handleUpload}
-          disabled={!file || uploading}
+          disabled={files.length === 0 || uploading}
           className={`px-4 py-2 rounded-md font-medium text-white ${
-            !file || uploading
+            files.length === 0 || uploading
               ? 'bg-gray-400 cursor-not-allowed'
               : 'bg-blue-600 hover:bg-blue-700'
           }`}
         >
-          {uploading ? 'Uploading...' : 'Upload Document'}
+          {uploading ? 'Uploading...' : `Upload ${files.length > 0 ? files.length : ''} Document${files.length !== 1 ? 's' : ''}`}
         </button>
       </div>
     </div>

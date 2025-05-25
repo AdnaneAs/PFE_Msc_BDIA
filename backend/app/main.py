@@ -1,14 +1,19 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+import logging
+import sys
 
 from app.api.v1 import documents, query
 from app.database.db_setup import init_db
-import logging
 
 # Configure logging
 logging.basicConfig(
     level=logging.INFO,
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
+    handlers=[
+        logging.StreamHandler(sys.stdout),
+        logging.FileHandler('app.log')
+    ]
 )
 logger = logging.getLogger(__name__)
 
@@ -32,6 +37,7 @@ app.add_middleware(
 # Simple API endpoint to test backend-frontend communication
 @app.get("/api/hello")
 async def hello():
+    logger.info("Hello endpoint called")
     return {"message": "Backend is running!"}
 
 # Include API routers
@@ -41,7 +47,15 @@ app.include_router(query.router, prefix="/api/query", tags=["query"])
 # Add startup event to initialize services
 @app.on_event("startup")
 async def startup_event():
-    # Initialize the SQLite database
-    logger.info("Initializing services...")
-    await init_db()
-    logger.info("Services initialized successfully")
+    try:
+        logger.info("Initializing services...")
+        await init_db()
+        logger.info("Services initialized successfully")
+    except Exception as e:
+        logger.error(f"Error during startup: {str(e)}", exc_info=True)
+        raise
+
+# Add shutdown event
+@app.on_event("shutdown")
+async def shutdown_event():
+    logger.info("Shutting down services...")
