@@ -65,7 +65,11 @@ const QueryInput = ({ onQueryResult }) => {
   useEffect(() => {
     return () => {
       if (eventSourceRef.current) {
-        eventSourceRef.current.close();
+        if (typeof eventSourceRef.current.abort === 'function') {
+          eventSourceRef.current.abort();
+        } else if (typeof eventSourceRef.current.close === 'function') {
+          eventSourceRef.current.close();
+        }
         eventSourceRef.current = null;
       }
     };
@@ -133,130 +137,104 @@ const QueryInput = ({ onQueryResult }) => {
     try {
       // Close any existing stream
       if (eventSourceRef.current) {
-        eventSourceRef.current.close();
+        if (typeof eventSourceRef.current.abort === 'function') {
+          eventSourceRef.current.abort();
+        } else if (typeof eventSourceRef.current.close === 'function') {
+          eventSourceRef.current.close();
+        }
+        eventSourceRef.current = null;
       }
       
       // Get current model configuration
       const modelConfig = getCurrentModelConfig();
       
-      // Create the event source for streaming
-      const eventSource = streamQuery(question, modelConfig);
-      eventSourceRef.current = eventSource;
+      // Create the stream controller and event emitter
+      const stream = streamQuery(question, modelConfig);
+      eventSourceRef.current = stream; // Store for cleanup
       
-      // Handle incoming chunks
-      eventSource.onmessage = (event) => {
-        try {
-          const data = JSON.parse(event.data);
-          
-          // Handle metadata message (sent at the beginning)
-          if (data.metadata) {
-            setStreamSources(data.sources || []);
-            setQueryStatus({
-              state: 'generating',
-              message: `Found ${data.num_sources} relevant documents. Generating answer...`,
-              retrievalTime: data.retrieval_time_ms
-            });
-            
-            // Create and pass a partial result to display sources immediately
-            const partialResult = {
-              answer: '',
-              sources: data.sources,
-              num_sources: data.num_sources,
-              retrieval_time_ms: data.retrieval_time_ms,
-              streaming: true
-            };
-            onQueryResult(partialResult);
-          }          
-          // Handle token updates
-          else if (data.token) {
-            // Update the streamed response in state
-            const newResponse = streamedResponse + data.token;
-            setStreamedResponse(newResponse);
-            
-            // Log the token and current accumulated response for debugging
-            console.log("Received token:", data.token);
-            console.log("Current accumulated response length:", newResponse.length);
-            
-            // Update the result with the current accumulated response
-            const updatedResult = {
-              answer: newResponse,
-              sources: streamSources,
-              num_sources: streamSources.length,
-              streaming: true,
-              retrieval_time_ms: queryStatus?.retrievalTime,
-            };
-            onQueryResult(updatedResult);
-          }
-          // Handle completion message
-          else if (data.complete) {
-            setQueryStatus({
-              state: 'success',
-              message: 'Answer generated successfully!',
-              queryTime: data.query_time_ms
-            });
-            
-            // Create the final result object with the latest accumulated response
-            // This ensures we're using the most up-to-date response
-            const finalResponse = streamedResponse + (data.final_token || '');
-            setStreamedResponse(finalResponse);
-            
-            console.log("Streaming complete. Final answer length:", finalResponse.length);
-            
-            const finalResult = {
-              answer: finalResponse,
-              sources: streamSources,
-              num_sources: streamSources.length,
-              query_time_ms: data.query_time_ms,
-              retrieval_time_ms: queryStatus?.retrievalTime,
-              streaming: false
-            };
-            
-            // Make sure the final result is sent to the parent component
-            onQueryResult(finalResult);
-            
-            // Close the event source
-            eventSource.close();
-            eventSourceRef.current = null;
-            setLoading(false);
-            
-            // Fetch updated LLM status after query completion
-            fetchLlmStatus();
-          }
-          // Handle error message
-          else if (data.error) {
-            setError(data.message || 'An error occurred while streaming the response');
-            setQueryStatus({
-              state: 'error',
-              message: 'Failed to get a streaming answer'
-            });
-            
-            // Close the event source
-            eventSource.close();
-            eventSourceRef.current = null;
-            setLoading(false);
-            
-            // Fallback to normal query
-            if (streamedResponse === '') {
-              handleSubmitNormal(null, true);
-            }
-          }
-        } catch (parseError) {
-          console.error('Error parsing stream data:', parseError, event.data);
-          setError('Error parsing stream data');
-          eventSource.close();
-          eventSourceRef.current = null;
-          setLoading(false);
-        }
-      };
-      
-      // Handle errors in the stream
-      eventSource.onerror = (err) => {
-        console.error('Stream error:', err);
-        setError('Error connecting to streaming service - falling back to regular query');
+      // Handle metadata events (sent at the beginning)
+      stream.events.on('metadata', (data) => {
+        setStreamSources(data.sources || []);
+        setQueryStatus({
+          state: 'generating',
+          message: `Found ${data.num_sources} relevant documents. Generating answer...`,
+          retrievalTime: data.retrieval_time_ms
+        });
         
-        // Close the event source
-        eventSource.close();
-        eventSourceRef.current = null;
+        // Create and pass a partial result to display sources immediately
+        const partialResult = {
+          answer: '',
+          sources: data.sources,
+          num_sources: data.num_sources,
+          retrieval_time_ms: data.retrieval_time_ms,
+          streaming: true
+        };
+        onQueryResult(partialResult);
+      });
+      
+      // Handle token updates
+      stream.events.on('token', (token) => {
+        // Update the streamed response in state
+        setStreamedResponse(prev => {
+          const newResponse = prev + token;
+          
+          // Update the result with the current accumulated response
+          const updatedResult = {
+            answer: newResponse,
+            sources: streamSources,
+            num_sources: streamSources.length,
+            streaming: true,
+            retrieval_time_ms: queryStatus?.retrievalTime,
+          };
+          onQueryResult(updatedResult);
+          
+          return newResponse;
+        });
+      });
+      
+      // Handle completion
+      stream.events.on('complete', (data) => {
+        setQueryStatus({
+          state: 'success',
+          message: 'Answer generated successfully!',
+          queryTime: data.query_time_ms
+        });
+        
+        console.log("Streaming complete. Final answer:", data.answer);
+        
+        const finalResult = {
+          answer: data.answer,
+          sources: data.sources || streamSources,
+          num_sources: (data.sources || streamSources).length,
+          query_time_ms: data.query_time_ms,
+          retrieval_time_ms: queryStatus?.retrievalTime,
+          streaming: false
+        };
+        
+        // Make sure the final result is sent to the parent component
+        onQueryResult(finalResult);
+        
+        // Cleanup
+        if (eventSourceRef.current) {
+          eventSourceRef.current.abort();
+          eventSourceRef.current = null;
+        }
+        setLoading(false);
+        
+        // Fetch updated LLM status after query completion
+        fetchLlmStatus();
+      });
+      
+      // Handle errors
+      stream.events.on('error', (error) => {
+        console.error('Stream error:', error);
+        setError(error.message || 'Error connecting to streaming service - falling back to regular query');
+        
+        // Cleanup
+        if (eventSourceRef.current) {
+          eventSourceRef.current.abort();
+          eventSourceRef.current = null;
+        }
         
         // Fall back to normal query if we haven't received any response yet
         if (streamedResponse === '') {
@@ -264,7 +242,7 @@ const QueryInput = ({ onQueryResult }) => {
         } else {
           setLoading(false);
         }
-      };
+      });
     } catch (err) {
       console.error('Failed to set up streaming:', err);
       setError('Failed to set up streaming - falling back to regular query');

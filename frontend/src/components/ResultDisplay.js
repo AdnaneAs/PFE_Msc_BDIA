@@ -61,8 +61,16 @@ const ResultDisplay = ({ result }) => {
       // Handle normal responses
       if (result.answer !== undefined) {
         console.log("Updating displayed answer, length:", result.answer?.length || 0);
-        setDisplayedAnswer(result.answer);
-        setIsLoading(false);
+        // Only update if we're not streaming or if this is a complete response
+        if (!result.streaming || !isStreaming) {
+          setDisplayedAnswer(result.answer);
+        }
+        
+        // If this is a complete response, mark loading as done
+        if (!result.streaming) {
+          setIsLoading(false);
+        }
+        
         setErrorMessage('');
       }
       
@@ -72,7 +80,7 @@ const ResultDisplay = ({ result }) => {
         setIsStreaming(false);
       }
     }
-  }, [result]);
+  }, [result, isStreaming]);
   
   // Scroll to bottom when streaming new content
   useEffect(() => {

@@ -170,7 +170,7 @@ export const submitQuery = async (question, modelConfig = {}) => {
     // Start time for performance tracking
     const startTime = performance.now();
     
-    const response = await fetch(`${API_BASE_URL}/api/query`, {
+    const response = await fetch(`${API_BASE_URL}/api/query/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -246,7 +246,7 @@ export const streamQuery = (question, modelConfig = {}) => {
     };
     
     // Create a unique URL for the stream to avoid caching issues
-    const url = new URL(`${API_BASE_URL}/api/query/stream`);
+    const url = new URL(`${API_BASE_URL}/api/query/stream/`);
     url.searchParams.append('_t', Date.now()); // Add a timestamp
     
     // Set up the fetch request for streaming
@@ -378,7 +378,7 @@ export const streamQuery = (question, modelConfig = {}) => {
  */
 export const fetchStreamingQuery = async (question) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/query/stream`, {
+    const response = await fetch(`${API_BASE_URL}/api/query/stream/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
