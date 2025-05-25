@@ -70,8 +70,12 @@ def add_documents(
     # Get collection
     collection = get_collection(collection_name)
     
-    # Generate IDs if not already in metadata
-    ids = [str(i) for i in range(len(texts))]
+    # Get current count to use as starting index for new IDs
+    # This ensures no ID conflicts with existing documents
+    current_count = collection.count()
+    
+    # Generate unique IDs based on current count
+    ids = [f"{current_count + i}" for i in range(len(texts))]
     
     logger.info(f"Adding {len(texts)} documents to collection '{collection_name}'")
     

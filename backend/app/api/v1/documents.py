@@ -4,10 +4,12 @@ from typing import List, Optional, Dict, Any
 import asyncio
 import uuid
 import json
+import pandas as pd
+import io
 
 from app.models.document_models import DocumentUploadResponse, DocumentResponse, DocumentList
 from app.services.document_service import handle_document_upload
-from app.database.db_setup import get_all_documents, get_document_by_id, delete_document
+from app.database.db_setup import get_all_documents, get_document_by_id, delete_document, init_db
 from app.services.vector_db_service import get_all_vectorized_documents
 from app.services.llamaparse_service import (
     parse_pdf_document, 
@@ -20,6 +22,50 @@ from app.services.embedding_service import generate_embeddings
 from app.services.vector_db_service import add_documents
 
 router = APIRouter()
+
+# Supported file extensions
+SUPPORTED_EXTENSIONS = {
+    'pdf': 'application/pdf',
+    'docx': 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    'doc': 'application/msword',
+    'txt': 'text/plain',
+    'csv': 'text/csv'
+}
+
+def is_supported_file(filename: str) -> bool:
+    """Check if the file extension is supported"""
+    return any(filename.lower().endswith(f'.{ext}') for ext in SUPPORTED_EXTENSIONS.keys())
+
+async def process_csv_file(file_content: bytes, filename: str) -> str:
+    """Process CSV file and store in SQLite database"""
+    try:
+        # Read CSV content
+        df = pd.read_csv(io.BytesIO(file_content))
+        
+        # Create a table name from the filename
+        table_name = f"csv_{filename.replace('.', '_').replace('-', '_')}"
+        
+        # Store in SQLite database
+        conn = await init_db()
+        df.to_sql(table_name, conn, if_exists='replace', index=False)
+        
+        # Generate a text representation for vector storage
+        text_content = f"CSV File: {filename}\n\n"
+        text_content += "Columns:\n"
+        text_content += "\n".join(f"- {col}" for col in df.columns)
+        text_content += "\n\nSample Data:\n"
+        text_content += df.head().to_string()
+        
+        return text_content
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error processing CSV file: {str(e)}")
+
+async def process_text_file(file_content: bytes) -> str:
+    """Process text file content"""
+    try:
+        return file_content.decode('utf-8')
+    except UnicodeDecodeError:
+        raise HTTPException(status_code=400, detail="Invalid text file encoding. Please use UTF-8.")
 
 @router.post(
     "/upload", 
@@ -146,10 +192,15 @@ async def upload_document_async(
     background_tasks: BackgroundTasks = BackgroundTasks()
 ):
     """
-    Upload a PDF document and process it asynchronously in the background
+    Upload a document and process it asynchronously in the background.
+    Supports PDF, DOCX, DOC, TXT, and CSV files.
     """
-    if not file.filename.endswith('.pdf'):
-        raise HTTPException(status_code=400, detail="Only PDF files are supported")
+    if not is_supported_file(file.filename):
+        supported_types = ", ".join(SUPPORTED_EXTENSIONS.keys())
+        raise HTTPException(
+            status_code=400, 
+            detail=f"Unsupported file type. Supported types are: {supported_types}"
+        )
     
     try:
         # Generate a unique ID for this document
@@ -159,10 +210,10 @@ async def upload_document_async(
         file_content = await file.read()
         
         # Define the callback function for when parsing is complete
-        async def process_parsed_content(markdown_content: str):
+        async def process_parsed_content(content: str):
             try:
                 # Chunk the text
-                chunks = chunk_text(markdown_content)
+                chunks = chunk_text(content)
                 if not chunks:
                     print(f"Failed to extract chunks from {file.filename}")
                     return
@@ -175,7 +226,8 @@ async def upload_document_async(
                     "filename": file.filename,
                     "chunk_index": i,
                     "total_chunks": len(chunks),
-                    "doc_id": doc_id
+                    "doc_id": doc_id,
+                    "file_type": file.filename.split('.')[-1].lower()
                 } for i in range(len(chunks))]
                 
                 # Add documents to ChromaDB
@@ -189,14 +241,26 @@ async def upload_document_async(
             except Exception as e:
                 print(f"Error in background processing: {str(e)}")
         
-        # Add background task
-        background_tasks.add_task(
-            process_pdf_in_background,
-            file_content,
-            file.filename,
-            process_parsed_content,
-            doc_id
-        )
+        # Process file based on type
+        file_ext = file.filename.split('.')[-1].lower()
+        
+        if file_ext == 'csv':
+            # Process CSV file
+            content = await process_csv_file(file_content, file.filename)
+            await process_parsed_content(content)
+        elif file_ext == 'txt':
+            # Process text file
+            content = await process_text_file(file_content)
+            await process_parsed_content(content)
+        else:
+            # Process PDF/DOCX/DOC using LlamaParse
+            background_tasks.add_task(
+                process_pdf_in_background,
+                file_content,
+                file.filename,
+                process_parsed_content,
+                doc_id
+            )
         
         return {
             "filename": file.filename,

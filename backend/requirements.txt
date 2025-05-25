@@ -1,17 +1,17 @@
-fastapi>=0.95.0
-uvicorn>=0.21.1
-python-dotenv>=1.0.0
+fastapi==0.104.1
+uvicorn==0.24.0
+python-dotenv==1.0.0
 requests==2.31.0
 numpy==1.26.4
 huggingface_hub==0.19.4
-sentence-transformers>=2.2.2
-chromadb>=0.4.6
-pydantic>=1.10.7
+sentence-transformers==2.2.2
+chromadb==0.4.18
+pydantic==2.5.2
 aiofiles==23.2.1
-python-multipart>=0.0.6
-httpx>=0.24.0
+python-multipart==0.0.6
+httpx==0.25.2
 streamlit>=1.29.0
-pandas>=2.1.4
+pandas==2.1.3
 pydantic>=1.10.0,<2.0.0
 langchain>=0.0.325
 arxiv>=1.4.8
@@ -24,6 +24,9 @@ openai>=1.3.0
 aiohttp>=3.8.0
 tiktoken>=0.5.2
 plotly>=5.18.0
+
+# Added nest_asyncio to allow nested event loops
+nest_asyncio==1.5.8
 
 # PDF and Vector DB dependencies
 pypdf>=4.0.1
@@ -45,4 +48,22 @@ orjson>=3.9.0
 aiohttp>=3.8.0
 
 # Added aiosqlite
-aiosqlite>=0.19.0
+aiosqlite==0.19.0
+
+# Added python-docx
+python-docx==1.0.1
+
+# Added sqlalchemy
+sqlalchemy==2.0.23
+
+# Added python-jose
+python-jose==3.3.0
+
+# Added passlib
+passlib==1.7.4
+
+# Added bcrypt
+bcrypt==4.0.1
+
+# Added llama-parse
+llama-parse==0.0.15
