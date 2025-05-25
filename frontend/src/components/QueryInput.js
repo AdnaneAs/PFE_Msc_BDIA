@@ -97,7 +97,7 @@ const QueryInput = ({ onQueryResult }) => {
     } else if (modelProvider === 'gemini') {
       return {
         provider: 'gemini',
-        model: 'gemini-pro',
+        model: 'gemini-2.5-flash',
         api_key: apiKey
       };
     }

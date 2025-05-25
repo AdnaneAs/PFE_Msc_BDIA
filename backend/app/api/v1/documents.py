@@ -6,11 +6,12 @@ import uuid
 import json
 import pandas as pd
 import io
-
+import os
+import logging
 from app.models.document_models import DocumentUploadResponse, DocumentResponse, DocumentList
 from app.services.document_service import handle_document_upload
 from app.database.db_setup import get_all_documents, get_document_by_id, delete_document, init_db
-from app.services.vector_db_service import get_all_vectorized_documents
+from app.services.vector_db_service import get_all_vectorized_documents, get_collection
 from app.services.llamaparse_service import (
     parse_pdf_document, 
     process_pdf_in_background, 
@@ -22,7 +23,7 @@ from app.services.embedding_service import generate_embeddings
 from app.services.vector_db_service import add_documents
 
 router = APIRouter()
-
+logger = logging.getLogger(__name__)
 # Supported file extensions
 SUPPORTED_EXTENSIONS = {
     'pdf': 'application/pdf',
@@ -167,20 +168,82 @@ async def remove_document(
     document_id: int = Path(..., description="The ID of the document to delete")
 ):
     """
-    Delete a document from the system by its ID.
-    
-    Note: This only removes the document metadata record. The actual document file
-    and its vector embeddings are not deleted in this implementation.
+    Delete a document from both SQLite and vector databases.
+    Also removes any associated CSV tables if the document was a CSV file.
     """
-    document = await get_document_by_id(document_id)
-    if not document:
-        raise HTTPException(status_code=404, detail=f"Document with ID {document_id} not found")
-    
-    success = await delete_document(document_id)
-    if not success:
-        raise HTTPException(status_code=500, detail=f"Failed to delete document with ID {document_id}")
-    
-    return {"message": f"Document with ID {document_id} successfully deleted"}
+    try:
+        # First try to get the document from SQLite
+        document = await get_document_by_id(document_id)
+        
+        # If not in SQLite, check vector database
+        if not document:
+            # Get all vectorized documents
+            vector_docs = get_all_vectorized_documents()
+            vector_doc = next((doc for doc in vector_docs if str(doc["doc_id"]) == str(document_id)), None)
+            
+            if not vector_doc:
+                raise HTTPException(status_code=404, detail=f"Document with ID {document_id} not found")
+              # Delete from vector database
+            collection = get_collection()
+            try:
+                # First, find all matching document chunks using the doc_id
+                results = collection.get(ids=list([str(document_id)]))
+                ids_to_delete = results.get("ids", [])
+                
+                if not ids_to_delete:
+                    logger.warning(f"No vector database documents found with doc_id: {document_id}")
+                else:
+                    # Delete by specific IDs instead of using 'where' clause
+                    status = collection.delete(ids=ids_to_delete)
+                    logger.info(f"Deleted {len(ids_to_delete)} chunks for document {document_id} from vector database status: {status}")
+            except Exception as e:
+                logger.error(f"Error deleting from vector database: {str(e)}")
+                raise HTTPException(status_code=500, detail=f"Error deleting from vector database: {str(e)}")
+            
+            return {"message": f"Document with ID {document_id} successfully deleted from vector database"}
+        
+        # If document exists in SQLite, handle both databases
+        filename = document.filename
+          # Delete from vector database if it exists there
+        collection = get_collection()
+        try:
+            # First, find all matching document chunks using the filename
+            results = collection.get(where={"filename": filename})
+            ids_to_delete = results.get("ids", [])
+            
+            if not ids_to_delete:
+                logger.warning(f"No vector database documents found with filename: {filename}")
+            else:
+                # Delete by specific IDs instead of using 'where' clause
+                collection.delete(ids=ids_to_delete)
+                logger.info(f"Deleted {len(ids_to_delete)} chunks for document {filename} from vector database")
+        except Exception as e:
+            logger.error(f"Error deleting from vector database: {str(e)}")
+            # Continue with SQLite deletion even if vector DB deletion fails
+        
+        # If it's a CSV file, delete the associated table
+        if filename.lower().endswith('.csv'):
+            try:
+                table_name = f"csv_{filename.replace('.', '_').replace('-', '_')}"
+                conn = await init_db()
+                conn.execute(f"DROP TABLE IF EXISTS {table_name}")
+                logger.info(f"Deleted CSV table {table_name}")
+            except Exception as e:
+                logger.error(f"Error deleting CSV table: {str(e)}")
+                # Continue with other deletions even if table deletion fails
+        
+        # Delete from SQLite
+        success = await delete_document(document_id)
+        if not success:
+            raise HTTPException(status_code=500, detail=f"Failed to delete document with ID {document_id}")
+        
+        return {"message": f"Document with ID {document_id} successfully deleted from all databases"}
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error deleting document: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}")
 
 @router.post(
     "/upload/async",

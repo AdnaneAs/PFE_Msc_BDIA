@@ -153,9 +153,17 @@ const FileUpload = ({ onUploadComplete }) => {
     try {
       addDebugEntry(`Setting up event source for ${fileName} (${docId})`, 'blue');
       
+      // Close any existing event source for this docId
+      if (eventSourceRefs.current[docId]) {
+        eventSourceRefs.current[docId].close();
+      }
+      
       // Create new event source for status updates
       const eventSource = streamDocumentStatus(docId);
       eventSourceRefs.current[docId] = eventSource;
+      
+      let reconnectAttempts = 0;
+      const maxReconnectAttempts = 3;
       
       // Handle incoming messages
       eventSource.onmessage = (event) => {
@@ -227,15 +235,28 @@ const FileUpload = ({ onUploadComplete }) => {
       
       // Handle errors
       eventSource.onerror = (error) => {
-        setError(`Error connecting to status stream for ${fileName} - falling back to polling`);
-        addDebugEntry(`Connection to status stream failed for ${fileName}, using polling instead`, 'red');
+        console.error(`EventSource error for ${fileName}:`, error);
         
-        // Close the event source
+        // Close the current event source
         eventSource.close();
         delete eventSourceRefs.current[docId];
         
-        // Fall back to polling
-        setupStatusPolling(docId, fileName);
+        // Try to reconnect if we haven't exceeded max attempts
+        if (reconnectAttempts < maxReconnectAttempts) {
+          reconnectAttempts++;
+          addDebugEntry(`Connection lost for ${fileName}, attempting reconnect (${reconnectAttempts}/${maxReconnectAttempts})`, 'yellow');
+          
+          // Wait a bit before reconnecting
+          setTimeout(() => {
+            setupEventSource(docId, fileName);
+          }, 1000 * reconnectAttempts); // Exponential backoff
+        } else {
+          addDebugEntry(`Connection to status stream failed for ${fileName}, using polling instead`, 'red');
+          setError(`Error connecting to status stream for ${fileName} - falling back to polling`);
+          
+          // Fall back to polling
+          setupStatusPolling(docId, fileName);
+        }
       };
       
       return eventSource;
@@ -409,29 +430,28 @@ const FileUpload = ({ onUploadComplete }) => {
         }
       });
       
-      try {
-        // Wait for all uploads to initialize
-        const results = await Promise.all(uploadPromises);
-        setUploadResults(results);
-        
-        // Check if all uploads failed
-        const allFailed = results.every(result => result.status === 'error');
-        if (allFailed) {
-          setUploading(false);
-          setError('All file uploads failed. Please check the debug info for details.');
-        }
-      } catch (promiseErr) {
-        // This catches errors in the Promise.all itself
-        addDebugEntry(`Error in batch processing: ${promiseErr.message}`, 'red');
-        setError('Failed to process some files. You can retry uploading them individually.');
-        setUploading(false);
-      }
-    } catch (err) {
-      console.error('Upload process failed:', err);
-      setError(err.message || 'Failed to upload files');
-      addDebugEntry(`Upload process error: ${err.message}`, 'red');
+      // Wait for all uploads to complete
+      const results = await Promise.all(uploadPromises);
+      setUploadResults(results);
+      
+      // Check if all files are processed
+      checkAllFilesProcessed();
+      
+    } catch (error) {
+      setError(`Error during upload: ${error.message}`);
+      addDebugEntry(`Upload process failed: ${error.message}`, 'red');
       setUploading(false);
     }
+  };
+
+  // Add a reset function to clear the upload state
+  const resetUploadState = () => {
+    setUploading(false);
+    setFiles([]);
+    setUploadResults([]);
+    setProcessingStatus({});
+    setError(null);
+    clearDebugLogs();
   };
 
   // Retry uploading a failed file
@@ -701,15 +721,17 @@ const FileUpload = ({ onUploadComplete }) => {
       <div className="flex justify-end">
         <button
           type="button"
-          onClick={handleUpload}
-          disabled={files.length === 0 || uploading}
+          onClick={uploading ? resetUploadState : handleUpload}
+          disabled={files.length === 0 && !uploading}
           className={`px-4 py-2 rounded-md font-medium text-white ${
-            files.length === 0 || uploading
+            files.length === 0 && !uploading
               ? 'bg-gray-400 cursor-not-allowed'
-              : 'bg-blue-600 hover:bg-blue-700'
+              : uploading
+                ? 'bg-green-600 hover:bg-green-700'
+                : 'bg-blue-600 hover:bg-blue-700'
           }`}
         >
-          {uploading ? 'Uploading...' : `Upload ${files.length > 0 ? files.length : ''} Document${files.length !== 1 ? 's' : ''}`}
+          {uploading ? 'Done' : `Upload ${files.length > 0 ? files.length : ''} Document${files.length !== 1 ? 's' : ''}`}
         </button>
       </div>
     </div>

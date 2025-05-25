@@ -70,28 +70,50 @@ def add_documents(
     # Get collection
     collection = get_collection(collection_name)
     
-    # Get current count to use as starting index for new IDs
-    # This ensures no ID conflicts with existing documents
-    current_count = collection.count()
-    
-    # Generate unique IDs based on current count
-    ids = [f"{current_count + i}" for i in range(len(texts))]
+    # Generate unique IDs using UUIDs to avoid conflicts with any existing IDs
+    import uuid
+    ids = [f"chunk-{uuid.uuid4()}" for _ in range(len(texts))]
     
     logger.info(f"Adding {len(texts)} documents to collection '{collection_name}'")
     
-    # Add documents to collection
-    collection.add(
-        documents=texts,
-        embeddings=embeddings,
-        metadatas=metadatas,
-        ids=ids
-    )
-    
-    # Log updated count
-    count = collection.count()
-    logger.info(f"Collection '{collection_name}' now has {count} documents")
-    
-    return ids
+    try:
+        # Add documents to collection
+        collection.add(
+            documents=texts,
+            embeddings=embeddings,
+            metadatas=metadatas,
+            ids=ids
+        )
+        
+        # Log updated count
+        count = collection.count()
+        logger.info(f"Collection '{collection_name}' now has {count} documents")
+        
+        return ids
+    except Exception as e:
+        logger.error(f"Error adding documents to ChromaDB: {str(e)}")
+        # If there was an error, try with new IDs
+        try:
+            # Generate completely new IDs
+            import uuid
+            new_ids = [f"chunk-{uuid.uuid4()}" for _ in range(len(texts))]
+            
+            # Try again with new IDs
+            collection.add(
+                documents=texts,
+                embeddings=embeddings,
+                metadatas=metadatas,
+                ids=new_ids
+            )
+            
+            # Log updated count
+            count = collection.count()
+            logger.info(f"Collection '{collection_name}' now has {count} documents after retry")
+            
+            return new_ids
+        except Exception as retry_e:
+            logger.error(f"Failed to add documents even after retry: {str(retry_e)}")
+            raise
 
 def query_documents(
     query_embedding: List[float],
@@ -181,4 +203,58 @@ def get_all_vectorized_documents(collection_name: str = "documents") -> List[Dic
             })
     
     logger.info(f"Retrieved {len(vectorized_docs)} unique documents from vector database")
-    return vectorized_docs 
+    return vectorized_docs
+
+def delete_documents(document_id: str = None, filename: str = None) -> bool:
+    """
+    Delete documents from the vector database based on document_id or filename.
+    
+    Args:
+        document_id: ID of the document to delete
+        filename: Name of the file to delete
+        
+    Returns:
+        bool: True if deletion was successful, False otherwise
+    """
+    try:
+        # Get collection
+        collection = get_collection()
+        
+        # Build where clause based on provided parameters
+        where = {}
+        if document_id:
+            where["doc_id"] = str(document_id)
+        elif filename:
+            where["filename"] = filename
+            
+        if not where:
+            logger.error("No deletion criteria provided")
+            return False
+        
+        # First get all matching documents
+        try:
+            results = collection.get(where=where)
+            ids_to_delete = results.get("ids", [])
+            
+            if not ids_to_delete:
+                logger.warning(f"No documents found matching criteria: {where}")
+                return True  # Return true since there's nothing to delete
+                
+            logger.info(f"Found {len(ids_to_delete)} document chunks to delete with criteria: {where}")
+            
+            # Delete by IDs instead of using 'where' clause
+            collection.delete(ids=ids_to_delete)
+            
+            logger.info(f"Successfully deleted {len(ids_to_delete)} document chunks")
+            return True
+            
+        except Exception as inner_e:
+            logger.error(f"Error during deletion process: {str(inner_e)}")
+            # Try a direct deletion as fallback
+            collection.delete(where=where)
+            logger.info(f"Attempted fallback deletion with where clause: {where}")
+            return True
+            
+    except Exception as e:
+        logger.error(f"Error deleting documents from vector database: {str(e)}")
+        return False
