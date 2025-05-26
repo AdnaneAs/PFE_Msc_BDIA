@@ -3,7 +3,7 @@ from fastapi.responses import StreamingResponse
 from app.models.query_models import QueryRequest, QueryResponse, LLMStatusResponse, StreamingQueryRequest
 from app.services.embedding_service import generate_embedding
 from app.services.vector_db_service import query_documents
-from app.services.llm_service import get_answer_from_llm, get_answer_from_llm_async, get_llm_status, get_streaming_response, get_available_models
+from app.services.llm_service import get_answer_from_llm, get_llm_status, get_available_models
 from app.services.metrics_service import QueryMetricsTracker
 import time
 import json
@@ -103,130 +103,7 @@ async def stream_query(request: QueryRequest):
     # Initialize metrics tracker
     metrics = QueryMetricsTracker(request.question, request.config_for_model)
     
-    try:
-        # Enhanced logging of streaming request
-        logger.info(f"Received streaming query request - Question: '{request.question}'")
-        if request.config_for_model:
-            logger.info(f"Model configuration: {json.dumps(request.config_for_model)}")
-        
-        # Generate embedding for the question
-        metrics.mark_retrieval_start()
-        query_embedding = generate_embedding(request.question)
-        
-        # Query ChromaDB for relevant documents
-        query_results = query_documents(query_embedding)
-        
-        documents = query_results["documents"]
-        metadatas = query_results["metadatas"]
-        
-        # Mark retrieval completion
-        metrics.mark_retrieval_end(len(documents))
-        logger.info(f"Document retrieval completed, found {len(documents)} relevant documents")
-        
-        if not documents:
-            error_response = {
-                "error": True,
-                "message": "No relevant documents found to answer your question."
-            }
-            logger.warning(f"No relevant documents found for streaming query: '{request.question}'")
-            
-            # Track completion in metrics
-            metrics.complete()
-            
-            return StreamingResponse(
-                iter([json.dumps(error_response)]),
-                media_type="text/event-stream",
-                headers={
-                    "Cache-Control": "no-cache",
-                    "Connection": "keep-alive",
-                    "Content-Type": "text/event-stream",
-                    "X-Accel-Buffering": "no"
-                }
-            )
-            
-        # Start streaming response
-        async def event_generator():
-            try:
-                # Log streaming start
-                logger.info(f"Starting to stream response for query: '{request.question}'")
-                
-                # First send the metadata about the query
-                metadata = {
-                    "metadata": True,
-                    "num_sources": len(documents),
-                    "sources": metadatas,
-                    "retrieval_time_ms": metrics.complete()["retrieval_time_ms"]
-                }
-                yield f"data: {json.dumps(metadata)}\n\n"
-                
-                # Mark LLM processing start
-                metrics.mark_llm_start()
-                
-                # Track tokens for logging
-                token_count = 0
-                response_buffer = ""
-                
-                # Stream the response from the LLM with model configuration
-                async for token in get_streaming_response(request.question, documents, request.config_for_model):
-                    token_count += 1
-                    response_buffer += token
-                    
-                    # Log progress periodically
-                    if token_count % 100 == 0:
-                        logger.info(f"Streamed {token_count} tokens so far")
-                    
-                    yield f"data: {json.dumps({'token': token})}\n\n"
-                
-                # Mark LLM processing completion
-                metrics.mark_llm_end("streaming", len(response_buffer))
-                
-                # Get final metrics
-                final_metrics = metrics.complete()
-                
-                # Send completion message with timing
-                completion = {
-                    "complete": True,
-                    "query_time_ms": final_metrics["total_time_ms"],
-                    "final_token": ""  # Include an empty final token to avoid missing the last chunk
-                }
-                
-                # Log completion of streaming
-                logger.info(f"Completed streaming response with {token_count} tokens")
-                logger.info(f"First 200 chars of response: '{response_buffer[:200]}...' (truncated)")
-                
-                yield f"data: {json.dumps(completion)}\n\n"
-                
-            except Exception as e:
-                # Enhanced error logging
-                logger.error(f"Error streaming response for query: '{request.question}'", exc_info=True)
-                logger.error(f"Error details: {str(e)}")
-                
-                # Track error in metrics
-                metrics.mark_error(str(e))
-                
-                error_msg = f"Error streaming response: {str(e)}"
-                yield f"data: {json.dumps({'error': True, 'message': error_msg})}\n\n"
-        
-        return StreamingResponse(
-            event_generator(),
-            media_type="text/event-stream",
-            headers={
-                "Cache-Control": "no-cache",
-                "Connection": "keep-alive",
-                "Content-Type": "text/event-stream",
-                "X-Accel-Buffering": "no"
-            }
-        )
-        
-    except Exception as e:
-        # Enhanced error logging
-        logger.error(f"Error setting up streaming for query: '{request.question}'", exc_info=True)
-        logger.error(f"Error details: {str(e)}")
-        
-        # Track error in metrics
-        metrics.mark_error(str(e))
-        
-        raise HTTPException(status_code=500, detail=f"Error setting up streaming response: {str(e)}")
+    raise HTTPException(status_code=501, detail="Streaming is no longer supported. Please use the standard query endpoint.")
 
 
 @router.get(

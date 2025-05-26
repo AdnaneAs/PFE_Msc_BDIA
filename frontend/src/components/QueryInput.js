@@ -1,5 +1,5 @@
 import React, { useState, useEffect, useRef } from 'react';
-import { submitQuery, getLLMStatus, streamQuery, getOllamaModels } from '../services/api';
+import { submitQuery, getLLMStatus, getOllamaModels } from '../services/api';
 
 const QueryInput = ({ onQueryResult }) => {
   const [question, setQuestion] = useState('');
@@ -8,10 +8,6 @@ const QueryInput = ({ onQueryResult }) => {
   const [queryStatus, setQueryStatus] = useState(null);
   const [llmStatus, setLlmStatus] = useState(null);
   const [showLlmStatus, setShowLlmStatus] = useState(false);
-  const [streamingEnabled, setStreamingEnabled] = useState(true);
-  const [streamedResponse, setStreamedResponse] = useState('');
-  const [streamSources, setStreamSources] = useState([]);
-  const eventSourceRef = useRef(null);
 
   // Model selection states
   const [modelProvider, setModelProvider] = useState('ollama_local');
@@ -64,14 +60,7 @@ const QueryInput = ({ onQueryResult }) => {
   // Cleanup EventSource on unmount
   useEffect(() => {
     return () => {
-      if (eventSourceRef.current) {
-        if (typeof eventSourceRef.current.abort === 'function') {
-          eventSourceRef.current.abort();
-        } else if (typeof eventSourceRef.current.close === 'function') {
-          eventSourceRef.current.close();
-        }
-        eventSourceRef.current = null;
-      }
+      // Streaming eventSourceRef cleanup removed
     };
   }, []);
 
@@ -109,148 +98,7 @@ const QueryInput = ({ onQueryResult }) => {
     };
   };
 
-  const handleSubmitStreaming = async (e) => {
-    e.preventDefault();
-    
-    if (!question.trim()) {
-      setError('Please enter a question');
-      return;
-    }
-    
-    // Check if API key is provided when needed
-    if ((modelProvider === 'openai' || modelProvider === 'gemini') && !apiKey) {
-      setError(`Please enter an API key for ${modelProvider === 'openai' ? 'OpenAI' : 'Gemini'}`);
-      return;
-    }
-    
-    setLoading(true);
-    setError(null);
-    setStreamedResponse('');
-    setStreamSources([]);
-    
-    // Update status to show steps
-    setQueryStatus({
-      state: 'searching',
-      message: 'Searching for relevant documents...'
-    });
-    
-    try {
-      // Close any existing stream
-      if (eventSourceRef.current) {
-        if (typeof eventSourceRef.current.abort === 'function') {
-          eventSourceRef.current.abort();
-        } else if (typeof eventSourceRef.current.close === 'function') {
-          eventSourceRef.current.close();
-        }
-        eventSourceRef.current = null;
-      }
-      
-      // Get current model configuration
-      const modelConfig = getCurrentModelConfig();
-      
-      // Create the stream controller and event emitter
-      const stream = streamQuery(question, modelConfig);
-      eventSourceRef.current = stream; // Store for cleanup
-      
-      // Handle metadata events (sent at the beginning)
-      stream.events.on('metadata', (data) => {
-        setStreamSources(data.sources || []);
-        setQueryStatus({
-          state: 'generating',
-          message: `Found ${data.num_sources} relevant documents. Generating answer...`,
-          retrievalTime: data.retrieval_time_ms
-        });
-        
-        // Create and pass a partial result to display sources immediately
-        const partialResult = {
-          answer: '',
-          sources: data.sources,
-          num_sources: data.num_sources,
-          retrieval_time_ms: data.retrieval_time_ms,
-          streaming: true
-        };
-        onQueryResult(partialResult);
-      });
-      
-      // Handle token updates
-      stream.events.on('token', (token) => {
-        // Update the streamed response in state
-        setStreamedResponse(prev => {
-          const newResponse = prev + token;
-          
-          // Update the result with the current accumulated response
-          const updatedResult = {
-            answer: newResponse,
-            sources: streamSources,
-            num_sources: streamSources.length,
-            streaming: true,
-            retrieval_time_ms: queryStatus?.retrievalTime,
-          };
-          onQueryResult(updatedResult);
-          
-          return newResponse;
-        });
-      });
-      
-      // Handle completion
-      stream.events.on('complete', (data) => {
-        setQueryStatus({
-          state: 'success',
-          message: 'Answer generated successfully!',
-          queryTime: data.query_time_ms
-        });
-        
-        console.log("Streaming complete. Final answer:", data.answer);
-        
-        const finalResult = {
-          answer: data.answer,
-          sources: data.sources || streamSources,
-          num_sources: (data.sources || streamSources).length,
-          query_time_ms: data.query_time_ms,
-          retrieval_time_ms: queryStatus?.retrievalTime,
-          streaming: false
-        };
-        
-        // Make sure the final result is sent to the parent component
-        onQueryResult(finalResult);
-        
-        // Cleanup
-        if (eventSourceRef.current) {
-          eventSourceRef.current.abort();
-          eventSourceRef.current = null;
-        }
-        setLoading(false);
-        
-        // Fetch updated LLM status after query completion
-        fetchLlmStatus();
-      });
-      
-      // Handle errors
-      stream.events.on('error', (error) => {
-        console.error('Stream error:', error);
-        setError(error.message || 'Error connecting to streaming service - falling back to regular query');
-        
-        // Cleanup
-        if (eventSourceRef.current) {
-          eventSourceRef.current.abort();
-          eventSourceRef.current = null;
-        }
-        
-        // Fall back to normal query if we haven't received any response yet
-        if (streamedResponse === '') {
-          handleSubmitNormal(null, true);
-        } else {
-          setLoading(false);
-        }
-      });
-    } catch (err) {
-      console.error('Failed to set up streaming:', err);
-      setError('Failed to set up streaming - falling back to regular query');
-      
-      // Fall back to normal query
-      handleSubmitNormal(null, true);
-    }
-  };
+  // Streaming submit handler removed
 
   const handleSubmitNormal = async (e, isRetry = false) => {
     if (e) e.preventDefault();
@@ -296,7 +144,7 @@ const QueryInput = ({ onQueryResult }) => {
       if (result) {
         onQueryResult({
           ...result,
-          streaming: false
+          // streaming: false (removed, only non-streaming mode)
         });
       } else {
         onQueryResult({ error: true, message: 'No result returned from backend.' });
@@ -318,11 +166,7 @@ const QueryInput = ({ onQueryResult }) => {
   };
 
   const handleSubmit = (e) => {
-    if (streamingEnabled) {
-      handleSubmitStreaming(e);
-    } else {
-      handleSubmitNormal(e);
-    }
+    handleSubmitNormal(e);
   };
 
   // Format time values for display
@@ -448,25 +292,7 @@ const QueryInput = ({ onQueryResult }) => {
             </button>
             
             <div className="flex items-center">
-              <label htmlFor="streaming-toggle" className="mr-2 text-sm text-gray-600">
-                Streaming
-              </label>
-              <div className="relative inline-block w-10 mr-2 align-middle select-none">
-                <input
-                  type="checkbox"
-                  name="streaming-toggle"
-                  id="streaming-toggle"
-                  checked={streamingEnabled}
-                  onChange={() => setStreamingEnabled(!streamingEnabled)}
-                  className="sr-only"
-                />
-                <div className="block bg-gray-200 w-10 h-5 rounded-full"></div>
-                <div
-                  className={`absolute left-1 top-1 bg-white w-3 h-3 rounded-full transition-transform ${
-                    streamingEnabled ? 'transform translate-x-5' : ''
-                  }`}
-                ></div>
-              </div>
+              {/* Streaming toggle removed */}
             </div>
           </div>
           
@@ -528,9 +354,7 @@ const QueryInput = ({ onQueryResult }) => {
               {queryStatus.queryTime && (
                 <div className="text-xs mt-1">Total query time: {queryStatus.queryTime}ms</div>
               )}
-              {streamingEnabled && queryStatus.state === 'generating' && (
-                <div className="text-xs mt-1 font-semibold">Streaming response...</div>
-              )}
+              {/* Streaming response message removed */}
             </div>
           </div>
         </div>

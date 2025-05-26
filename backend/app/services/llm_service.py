@@ -50,6 +50,50 @@ llm_status = {
     "successful_queries": 0
 }
 
+def make_rag_prompt(query: str, relevant_passages: List[str]) -> str:
+    """
+    Create an enhanced RAG prompt for LLMs with optimized instructions
+    
+    Args:
+        query: User's question
+        relevant_passages: List of relevant text passages
+        
+    Returns:
+        str: Formatted prompt for the LLM
+    """
+    # Clean and join the passages with clear section markers
+    cleaned_passages = []
+    for i, passage in enumerate(relevant_passages):
+        # Clean the passage of problematic characters
+        cleaned = passage.replace("\n", " ").strip()
+        # Add a section marker with reference number
+        cleaned_passages.append(f"[{i+1}] {cleaned}")
+    
+    context_text = "\n\n".join(cleaned_passages)
+    
+    # Create an enhanced system prompt
+    prompt = f"""You are a knowledgeable assistant answering questions based on provided reference passages.
+
+INSTRUCTIONS:
+1. Answer ONLY based on the information in the provided passages.
+2. If the passages don't contain relevant information, say "I don't have enough information to answer that question."
+3. Include citation numbers [1], [2], etc. when referencing specific information from the passages.
+4. Provide thorough, accurate answers while explaining complex concepts clearly.
+5. Use a concise, informative tone.
+
+QUESTION: {query}
+
+REFERENCE PASSAGES:
+{context_text}
+
+ANSWER:
+"""
+    
+    logger.info(f"Created enhanced RAG prompt with {len(relevant_passages)} reference passages")
+    logger.debug(f"Prompt first 100 chars: {prompt[:100]}...")
+    
+    return prompt
+
 def create_prompt_with_context(question: str, context_documents: List[str]) -> str:
     """
     Create a prompt for the LLM by combining the question and context documents
@@ -61,28 +105,8 @@ def create_prompt_with_context(question: str, context_documents: List[str]) -> s
     Returns:
         str: Formatted prompt for the LLM
     """
-    # Join context documents with separators
-    context_text = "\n\n---\n\n".join(context_documents)
-    
-    # Create prompt template with context and question
-    prompt = f"""
-You are an assistant for question-answering tasks. 
-Use the following pieces of retrieved context to answer the question. 
-If you don't know the answer, just say that you don't know.
-Be concise and focus on the information provided in the context.
-
-Context:
-{context_text}
-
-Question: 
-{question}
-
-Answer:
-"""
-    logger.info(f"Created prompt with {len(context_documents)} context documents")
-    logger.debug(f"Prompt first 100 chars: {prompt[:100]}...")
-    
-    return prompt
+    # Use the enhanced RAG prompt function
+    return make_rag_prompt(question, context_documents)
 
 # Calculate a cache key based on question and context
 def get_cache_key(question: str, context_documents: List[str], model_config: Dict[str, Any] = None) -> str:
@@ -135,15 +159,21 @@ def query_ollama_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
         llm_status["successful_queries"] += 1
         return cache_result, f"ollama/{model} (cached)"
     
+    # Enhance the Ollama prompt with system instruction
+    system_instruction = "You are an AI assistant that answers questions based only on provided references. Always cite sources with [1], [2], etc."
+    
+    # For Ollama, we include the system instruction at the beginning of the prompt
+    full_prompt = f"{system_instruction}\n\n{prompt}"
+    
     payload = {
         "model": model,
-        "prompt": prompt,
+        "prompt": full_prompt,
         "stream": False,
         # Add options to potentially speed up generation
         "options": {
             "temperature": 0.1,  # Lower temperature for more deterministic responses
             "top_p": 0.9,
-            "num_predict": 1024  # Limit token generation for faster responses
+            "num_predict": 60000  # Limit token generation for faster responses
         }
     }
     
@@ -252,13 +282,14 @@ def query_openai_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
         logger.info("Sending request to OpenAI API")
         start_time = time.time()
         
+        # For OpenAI, we use the chat API with system and user messages
         response = openai.chat.completions.create(
             model=model,
             messages=[
-                {"role": "system", "content": "You are a helpful assistant for question-answering."},
+                {"role": "system", "content": "You are a helpful assistant for question-answering. Answer based only on the provided information, include citation numbers [1], [2], etc. when referencing specific information, and acknowledge when you don't have enough information."},
                 {"role": "user", "content": prompt}
             ],
-            max_tokens=1000,
+            max_tokens=60000,
             temperature=0.1  # Lower temperature for more deterministic responses
         )
         
@@ -331,14 +362,20 @@ def query_gemini_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
         logger.info("Sending request to Gemini API")
         start_time = time.time()
         
+        # For Gemini, we use enhanced system instructions
+        system_instruction = """Answer questions based only on the provided reference passages. 
+Include citation numbers [1], [2], etc. when referencing specific information.
+If the information isn't in the passages, state that you don't have enough information.
+Be accurate, clear, and concise in your responses."""
+        
         # Generate content with the specified configuration
         response = client.models.generate_content(
             model=model,
             contents=prompt,
             config=types.GenerateContentConfig(
-                max_output_tokens=30000,
+                max_output_tokens=60000,
                 temperature=0.1,
-                system_instruction="context"
+                system_instruction=system_instruction
             )
         )
         
@@ -429,202 +466,28 @@ def get_llm_status() -> Dict[str, Any]:
     
     return status_copy
 
-# Async version of the LLM query function for background processing
-async def get_answer_from_llm_async(question: str, context_documents: List[str], model_config: Dict[str, Any] = None) -> str:
-    """
-    Async version of get_answer_from_llm
-    """
-    loop = asyncio.get_event_loop()
-    return await loop.run_in_executor(None, get_answer_from_llm, question, context_documents, model_config)
-
 async def get_streaming_response(question: str, context_documents: List[str], model_config: Dict[str, Any] = None) -> AsyncIterator[str]:
-    """
-    Stream tokens from the LLM as they're generated
-    
-    Args:
-        question: User's question
-        context_documents: List of relevant document chunks
-        model_config: Configuration for the model
-        
-    Yields:
-        str: Individual tokens as they're generated
-    """
-    global llm_status
-    
-    # Update status
-    llm_status["is_processing"] = True
-    llm_status["last_query_time"] = time.time()
-    llm_status["total_queries"] += 1
-    
-    # Determine which provider to use
-    provider = "ollama"  # Default provider
-    
-    if model_config and 'provider' in model_config:
-        provider = model_config.get('provider')
-    
-    # Create prompt
-    prompt = create_prompt_with_context(question, context_documents)
-    
-    try:
-        if provider == "openai":
-            # Stream from OpenAI
-            async for token in stream_from_openai(prompt, model_config):
-                yield token
-        elif provider == "gemini":
-            # Stream from Gemini
-            async for token in stream_from_gemini(prompt, model_config):
-                yield token
-        else:
-            # Default to Ollama
-            async for token in stream_from_ollama(prompt, model_config):
-                yield token
-                
-        # Update status after successful generation
-        llm_status["is_processing"] = False
-        llm_status["successful_queries"] += 1
-    except Exception as e:
-        logger.error(f"Error in streaming response: {str(e)}")
-        yield f"Error: Could not stream response from {provider}. {str(e)}"
-        llm_status["is_processing"] = False
+    raise NotImplementedError("Streaming is no longer supported.")
 
 async def stream_from_ollama(prompt: str, model_config: Dict[str, Any] = None) -> AsyncIterator[str]:
-    """Stream tokens from Ollama"""
-    global llm_status
-    
-    # Get model from config or use default
-    model = DEFAULT_OLLAMA_MODEL
-    if model_config and 'model' in model_config:
-        model = model_config.get('model')
-    
-    # Update model used in status
-    llm_status["last_model_used"] = f"ollama/{model}"
-    
-    logger.info(f"Streaming from Ollama with model: {model}")
-    
-    try:
-        # Check if model is loaded
-        try:
-            model_status_response = requests.get(f"http://localhost:11434/api/tags", timeout=2)
-            
-            if model_status_response.status_code == 200:
-                model_list = model_status_response.json().get("models", [])
-                model_loaded = any(m.get("name") == model for m in model_list)
-                
-                if not model_loaded:
-                    yield f"The model '{model}' is not currently loaded in Ollama. Please run 'ollama pull {model}' first."
-                    return
-        except:
-            # If we can't check, continue anyway
-            logger.warning("Could not check model status, assuming it's loaded.")
-            
-        # Prepare the streaming request to Ollama
-        payload = {
-            "model": model,
-            "prompt": prompt,
-            "stream": True,
-            "options": {
-                "temperature": 0.1,
-                "top_p": 0.9,
-                "num_predict": 1024
-            }
-        }
-        
-        # Make streaming request
-        async with aiohttp.ClientSession() as session:
-            async with session.post(
-                "http://localhost:11434/api/generate", 
-                json=payload, 
-                timeout=60
-            ) as response:
-                if response.status == 200:
-                    # Parse streaming response
-                    buffer = ""
-                    async for line in response.content:
-                        line = line.decode('utf-8').strip()
-                        if line:
-                            try:
-                                json_line = json.loads(line)
-                                if "response" in json_line:
-                                    token = json_line["response"]
-                                    buffer += token
-                                    yield token
-                            except json.JSONDecodeError:
-                                continue
-                else:
-                    yield f"Error from Ollama API: {response.status}"
-    except Exception as e:
-        logger.error(f"Error streaming from Ollama: {str(e)}")
-        yield f"Error streaming from Ollama: {str(e)}"
+    raise NotImplementedError("Streaming is no longer supported.")
 
 async def stream_from_openai(prompt: str, model_config: Dict[str, Any] = None) -> AsyncIterator[str]:
-    """Stream tokens from OpenAI"""
-    global llm_status
-    
-    # Get API key and model from config or use defaults
-    api_key = OPENAI_API_KEY
-    model = DEFAULT_OPENAI_MODEL
-    
-    if model_config:
-        if 'api_key' in model_config:
-            api_key = model_config.get('api_key')
-        if 'model' in model_config:
-            model = model_config.get('model')
-    
-    # Update model used in status
-    llm_status["last_model_used"] = f"openai/{model}"
-    
-    logger.info(f"Streaming from OpenAI with model: {model}")
-    
-    try:
-        # Check if OpenAI is properly configured
-        if not api_key:
-            yield "OpenAI API key is not configured. Please provide an API key to use OpenAI models."
-            return
-            
-        import openai
-        openai.api_key = api_key
-        
-        # Create the streaming response
-        stream = await openai.chat.completions.create(
-            model=model,
-            messages=[
-                {"role": "system", "content": "You are a helpful assistant for question-answering."},
-                {"role": "user", "content": prompt}
-            ],
-            max_tokens=1000,
-            temperature=0.1,
-            stream=True
-        )
-        
-        # Process the streaming response
-        async for chunk in stream:
-            if chunk.choices[0].delta.content:
-                yield chunk.choices[0].delta.content
-                
-    except ImportError:
-        yield "OpenAI Python package is not installed. Please install it with 'pip install openai'."
-    except Exception as e:
-        logger.error(f"Error streaming from OpenAI: {str(e)}")
-        yield f"Error streaming from OpenAI: {str(e)}"
+    raise NotImplementedError("Streaming is no longer supported.")
 
 async def stream_from_gemini(prompt: str, model_config: Dict[str, Any] = None) -> AsyncIterator[str]:
-    """Stream tokens from Gemini"""
-    global llm_status
-    
-    # Get API key and model from config or use defaults
-    api_key = GEMINI_API_KEY
-    model = DEFAULT_GEMINI_MODEL
-    
-    if model_config:
-        if 'api_key' in model_config:
-            api_key = model_config.get('api_key')
-        if 'model' in model_config:
-            model = model_config.get('model')
+    raise NotImplementedError("Streaming is no longer supported.")
     
     # Update model used in status
     llm_status["last_model_used"] = f"gemini/{model}"
     
     logger.info(f"Streaming from Gemini with model: {model}")
+    
+    # Enhanced system instruction for Gemini
+    system_instruction = """Answer questions based only on the provided reference passages. 
+Include citation numbers [1], [2], etc. when referencing specific information.
+If the information isn't in the passages, state that you don't have enough information.
+Be accurate, clear, and concise in your responses."""
     
     try:
         try:
@@ -638,21 +501,21 @@ async def stream_from_gemini(prompt: str, model_config: Dict[str, Any] = None) -
             yield "Gemini API key is not configured. Please provide an API key to use Gemini models."
             return
         
+
         # Configure the Gemini API
         client = genai.Client(api_key=api_key)
-        
-        # Generate content with streaming
+        # Generate content with streaming (no duplicate system_instruction)
         response = client.models.generate_content(
             model=model,
             contents=prompt,
             config=types.GenerateContentConfig(
-                max_output_tokens=30000,
-                temperature=0.1,
-                system_instruction="context"
+                system_instruction=system_instruction,
+                max_output_tokens=60000,
+                temperature=0.1
             ),
             stream=True
         )
-        
+
         # Process the streaming response
         async for chunk in response:
             if chunk.text:
