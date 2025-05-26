@@ -313,7 +313,8 @@ def query_gemini_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     
     try:
         try:
-            import google.generativeai as genai
+            from google import genai
+            from google.genai import types
         except ImportError:
             logger.error("Google Generative AI package not installed")
             llm_status["is_processing"] = False
@@ -325,16 +326,21 @@ def query_gemini_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
             return "Gemini API key is not configured. Please provide an API key to use Gemini models.", f"gemini/{model} (no API key)"
         
         # Configure the Gemini API
-        genai.configure(api_key=api_key)
-        
-        # Create a Gemini model instance
-        gemini_model = genai.GenerativeModel(model)
+        client = genai.Client(api_key=api_key)
         
         logger.info("Sending request to Gemini API")
         start_time = time.time()
         
-        # Generate content
-        response = gemini_model.generate_content(prompt)
+        # Generate content with the specified configuration
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                max_output_tokens=30000,
+                temperature=0.1,
+                system_instruction="context"
+            )
+        )
         
         processing_time = time.time() - start_time
         result = response.text
@@ -622,7 +628,8 @@ async def stream_from_gemini(prompt: str, model_config: Dict[str, Any] = None) -
     
     try:
         try:
-            import google.generativeai as genai
+            from google import genai
+            from google.genai import types
         except ImportError:
             yield "Google Generative AI package is not installed. Please install it with 'pip install google-generativeai'."
             return
@@ -632,16 +639,22 @@ async def stream_from_gemini(prompt: str, model_config: Dict[str, Any] = None) -
             return
         
         # Configure the Gemini API
-        genai.configure(api_key=api_key)
-        
-        # Create a Gemini model instance
-        gemini_model = genai.GenerativeModel(model)
+        client = genai.Client(api_key=api_key)
         
         # Generate content with streaming
-        stream = gemini_model.generate_content(prompt, stream=True)
+        response = client.models.generate_content(
+            model=model,
+            contents=prompt,
+            config=types.GenerateContentConfig(
+                max_output_tokens=30000,
+                temperature=0.1,
+                system_instruction="context"
+            ),
+            stream=True
+        )
         
         # Process the streaming response
-        for chunk in stream:
+        async for chunk in response:
             if chunk.text:
                 yield chunk.text
                 
@@ -699,7 +712,7 @@ def get_available_models() -> List[Dict[str, Any]]:
     
     # Add Gemini models
     models.append({
-        "name": "gemini-pro",
+        "name": "gemini-1.5-flash",
         "provider": "gemini",
         "description": "Google - Gemini Pro"
     })
