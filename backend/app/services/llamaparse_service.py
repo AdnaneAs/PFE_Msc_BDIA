@@ -22,11 +22,17 @@ from app.config import LLAMAPARSE_API_KEY
 
 # Import the LlamaParse client
 try:
-    from llama_cloud_services import LlamaParse
+    from llama_parse import LlamaParse
     LLAMAPARSE_AVAILABLE = True
+    logger.info("LlamaParse imported successfully from llama_parse")
 except ImportError:
-    LLAMAPARSE_AVAILABLE = False
-    logger.warning("llama_cloud_services is not installed. LlamaParse will not be available.")
+    try:
+        from llama_cloud_services import LlamaParse
+        LLAMAPARSE_AVAILABLE = True
+        logger.info("LlamaParse imported successfully from llama_cloud_services")
+    except ImportError:
+        LLAMAPARSE_AVAILABLE = False
+        logger.warning("LlamaParse is not available. Neither llama_parse nor llama_cloud_services could be imported.")
 
 # Import fallback PDF processing libraries
 try:
@@ -50,7 +56,8 @@ _parser = None
 processing_status = {}
 
 # Configuration
-LLAMAPARSE_API_URL = os.getenv("LLAMAPARSE_API_URL", "https://api.llamaparse.com/v1/parse")
+# LlamaParse configuration
+LLAMAPARSE_API_URL = os.getenv("LLAMAPARSE_API_URL", "https://api.cloud.llamaindex.ai/api/v1/parsing/upload")
 
 def get_parser():
     """Get or create a LlamaParse parser instance"""
@@ -110,36 +117,30 @@ async def parse_document(file_path: str, file_type: str) -> Optional[str]:
         
         logger.info(f"Parsing {file_type} document: {file_path}")
         
-        with open(file_path, "rb") as file:
-            files = {"file": (os.path.basename(file_path), file)}
-            
-            # Prepare headers with API key
-            headers = {
-                "X-API-Key": LLAMAPARSE_API_KEY
-            }
-            
-            # Make the API request
-            async with httpx.AsyncClient(timeout=300) as client:  # 5-minute timeout
-                response = await client.post(
-                    LLAMAPARSE_API_URL,
-                    files=files,
-                    headers=headers
-                )
-                
-            # Check if request was successful
-            if response.status_code == 200:
-                # Parse the JSON response
-                result = response.json()
-                return result.get("text", "")
-            else:
-                logger.error(f"LlamaParse API error: {response.status_code} - {response.text}")
-                # Try fallback for PDF files
-                if file_type == "pdf":
-                    logger.info("Trying fallback PDF processing")
-                    with open(file_path, "rb") as f:
-                        file_content = f.read()
-                    return await parse_pdf_fallback(file_content, os.path.basename(file_path))
-                return None
+        # Use the official LlamaParse library
+        parser = LlamaParse(
+            api_key=LLAMAPARSE_API_KEY,
+            result_type="markdown",
+            verbose=True
+        )
+        
+        # Parse the document
+        documents = parser.load_data(file_path)
+        
+        # Extract text from the parsed documents
+        if documents:
+            # Combine all document texts
+            text_content = "\n\n".join([doc.text for doc in documents if hasattr(doc, 'text')])
+            return text_content
+        else:
+            logger.warning(f"No content extracted from {file_path}")
+            # Try fallback for PDF files
+            if file_type == "pdf":
+                logger.info("Trying fallback PDF processing due to empty result")
+                with open(file_path, "rb") as f:
+                    file_content = f.read()
+                return await parse_pdf_fallback(file_content, os.path.basename(file_path))
+            return None
                 
     except Exception as e:
         logger.error(f"Error parsing document {file_path}: {str(e)}")
