@@ -113,7 +113,23 @@ async def get_documents():
     """
     try:
         # Get documents from SQLite database
-        sqlite_documents = await get_all_documents()
+        sqlite_documents_data = await get_all_documents()
+        
+        # Convert dictionaries to DocumentResponse objects
+        sqlite_documents = []
+        for doc_data in sqlite_documents_data:
+            sqlite_documents.append(DocumentResponse(
+                id=doc_data["id"],
+                filename=doc_data["filename"],
+                file_type=doc_data["file_type"],
+                status=doc_data["status"],
+                original_name=doc_data["original_name"],
+                file_size=doc_data["file_size"],
+                uploaded_at=doc_data["uploaded_at"],
+                processed_at=doc_data.get("processed_at"),
+                chunk_count=doc_data.get("chunk_count"),
+                error_message=doc_data.get("error_message")
+            ))
         
         # Get documents from vector database
         vector_documents = get_all_vectorized_documents()
@@ -129,15 +145,20 @@ async def get_documents():
         # Add any documents that are only in vector database
         for vec_doc in vector_documents:
             if not any(doc.filename == vec_doc["filename"] for doc in sqlite_documents):
+                # Generate a hash-based integer ID for vector-only documents
+                import hashlib
+                doc_id_str = vec_doc.get("doc_id", vec_doc["filename"])
+                doc_id = abs(hash(doc_id_str)) % (10**9)  # Convert to positive integer
+                
                 sqlite_documents.append(DocumentResponse(
-                    id=vec_doc["doc_id"],
+                    id=doc_id,
                     filename=vec_doc["filename"],
                     file_type="unknown",  # We don't store this in vector DB
                     status="vectorized",
                     original_name=vec_doc["filename"],
                     file_size=0,  # We don't store this in vector DB
-                    uploaded_at=vec_doc["uploaded_at"],
-                    chunk_count=vec_doc["chunk_count"]
+                    uploaded_at=vec_doc.get("uploaded_at", ""),
+                    chunk_count=vec_doc.get("chunk_count", 0)
                 ))
         
         return DocumentList(documents=sqlite_documents)
