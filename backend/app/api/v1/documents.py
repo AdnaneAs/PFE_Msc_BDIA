@@ -339,37 +339,60 @@ async def upload_document_async(
     "/status/{doc_id}",
     summary="Get processing status for a document"
 )
-async def get_document_status(doc_id: str):
+async def get_document_status(doc_id: int):
     """
     Get the current processing status for a document
     """
-    status = get_processing_status(doc_id)
+    # First check in-memory status for active processing
+    status = get_processing_status(str(doc_id))
+    
+    # If not found in memory, check database for completed/failed documents
     if status["status"] == "unknown":
-        raise HTTPException(status_code=404, detail="Document not found or processing hasn't started")
+        try:
+            doc = await get_document_by_id(doc_id)
+            if doc:
+                # Convert database status to the expected format
+                status = {
+                    "status": doc["status"],
+                    "filename": doc["original_name"] or doc["filename"],
+                    "message": doc["error_message"] if doc["status"] == "failed" else f"Document {doc['status']}",
+                    "progress": 100 if doc["status"] == "completed" else 0,
+                    "doc_id": doc["id"]
+                }
+                if doc["status"] == "completed":
+                    status["chunk_count"] = doc["chunk_count"]
+                    status["processed_at"] = doc["processed_at"]
+            else:
+                raise HTTPException(status_code=404, detail="Document not found")
+        except Exception as e:
+            raise HTTPException(status_code=404, detail="Document not found or processing hasn't started")
+    
     return status
 
 @router.get(
     "/status/stream/{doc_id}",
     summary="Stream processing status updates for a document"
 )
-async def stream_document_status(doc_id: str):
+async def stream_document_status(doc_id: int):
     """
     Stream real-time processing status updates for a document
     """
-    status = get_processing_status(doc_id)
-    if status["status"] == "unknown":
-        raise HTTPException(status_code=404, detail="Document not found or processing hasn't started")
+    # Check if document exists in database
+    doc = await get_document_by_id(doc_id)
+    if not doc:
+        raise HTTPException(status_code=404, detail="Document not found")
     
     async def event_generator():
         try:
-            # Initial status
-            status = get_processing_status(doc_id)
+            # Get status from database
+            current_doc = await get_document_by_id(doc_id)
+            status = {
+                "status": current_doc["status"] if current_doc else "unknown",
+                "progress": 100 if current_doc and current_doc["status"] == "completed" else 50,
+                "message": f"Document {current_doc['status']}" if current_doc else "Unknown"
+            }
             yield f"data: {json.dumps(status)}\n\n"
             
-            # Stream updates until completed or error
-            async for status_update in get_processing_status_stream(doc_id):
-                yield f"data: {status_update}\n\n"
-                
         except Exception as e:
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"
     

@@ -46,7 +46,7 @@ class DocumentList(BaseModel):
 class DocumentUploadResponse(BaseModel):
     """Response model for document upload."""
     message: str
-    document_id: int
+    doc_id: int
     status: str = "pending"
 
 
@@ -74,11 +74,4 @@ class DocumentStatusResponse(BaseModel):
     status: str = Field(..., description="Status of the processing")
     message: str = Field(..., description="Status message")
     progress: int = Field(..., description="Progress percentage")
-    total_chunks: Optional[int] = Field(None, description="Total number of chunks processed")
-
-
-class DocumentUploadResponse(BaseModel):
-    filename: str = Field(..., description="Original filename")
-    chunks_added: int = Field(..., description="Number of chunks added to the vector store")
-    status: str = Field("processed", description="Status of the upload")
-    doc_id: str = Field(..., description="ID of the document") 
+    total_chunks: Optional[int] = Field(None, description="Total number of chunks processed") 

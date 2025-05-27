@@ -102,7 +102,7 @@ export const uploadDocumentAsync = async (file) => {
     
     console.log(`Starting async upload for: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
     
-    const response = await fetch(`${API_BASE_URL}/api/documents/upload/async`, {
+    const response = await fetch(`${API_BASE_URL}/api/documents/upload`, {
       method: 'POST',
       body: formData,
     });

@@ -10,20 +10,7 @@ import time
 import logging
 import httpx
 from dotenv import load_dotenv
-
-from app.config import LLAMAPARSE_API_KEY
-
-# Import the LlamaParse client
-try:
-    from llama_cloud_services import LlamaParse
-except ImportError:
-    raise ImportError("llama_cloud_services is not installed. Run 'pip install llama_cloud_services'")
-
-# Global parser instance to avoid recreating it for each request
-_parser = None
-
-# Progress tracking dict to store processing status
-processing_status = {}
+import io
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -31,13 +18,44 @@ logger = logging.getLogger(__name__)
 # Load environment variables
 load_dotenv()
 
+from app.config import LLAMAPARSE_API_KEY
+
+# Import the LlamaParse client
+try:
+    from llama_cloud_services import LlamaParse
+    LLAMAPARSE_AVAILABLE = True
+except ImportError:
+    LLAMAPARSE_AVAILABLE = False
+    logger.warning("llama_cloud_services is not installed. LlamaParse will not be available.")
+
+# Import fallback PDF processing libraries
+try:
+    import PyPDF2
+    PYPDF2_AVAILABLE = True
+except ImportError:
+    PYPDF2_AVAILABLE = False
+    logger.warning("PyPDF2 is not available for fallback PDF processing")
+
+try:
+    from pypdf import PdfReader
+    PYPDF_AVAILABLE = True
+except ImportError:
+    PYPDF_AVAILABLE = False
+    logger.warning("pypdf is not available for fallback PDF processing")
+
+# Global parser instance to avoid recreating it for each request
+_parser = None
+
+# Progress tracking dict to store processing status
+processing_status = {}
+
 # Configuration
 LLAMAPARSE_API_URL = os.getenv("LLAMAPARSE_API_URL", "https://api.llamaparse.com/v1/parse")
 
 def get_parser():
     """Get or create a LlamaParse parser instance"""
     global _parser
-    if _parser is None and LLAMAPARSE_API_KEY:
+    if _parser is None and LLAMAPARSE_AVAILABLE and LLAMAPARSE_API_KEY:
         _parser = LlamaParse(
             api_key=LLAMAPARSE_API_KEY,
             result_type="markdown",
@@ -57,7 +75,7 @@ def get_processing_status(doc_id: str) -> Dict[str, Any]:
 
 async def parse_document(file_path: str, file_type: str) -> Optional[str]:
     """
-    Parse a document using LlamaParse API.
+    Parse a document using LlamaParse API or fallback methods.
     
     Args:
         file_path: Path to the document file
@@ -66,10 +84,6 @@ async def parse_document(file_path: str, file_type: str) -> Optional[str]:
     Returns:
         Parsed text content or None if parsing failed
     """
-    if not LLAMAPARSE_API_KEY:
-        logger.error("LLAMAPARSE_API_KEY is not set in environment variables")
-        return None
-        
     try:
         # Different parsing strategy based on file type
         if file_type == "txt":
@@ -77,7 +91,23 @@ async def parse_document(file_path: str, file_type: str) -> Optional[str]:
             with open(file_path, "r", encoding="utf-8") as f:
                 return f.read()
         
-        # For PDF and DOCX, use LlamaParse API
+        # For PDF files, try fallback first if LlamaParse is not available
+        if file_type == "pdf" and (not LLAMAPARSE_AVAILABLE or not LLAMAPARSE_API_KEY):
+            logger.info(f"Using fallback PDF processing for {file_path}")
+            with open(file_path, "rb") as f:
+                file_content = f.read()
+            return await parse_pdf_fallback(file_content, os.path.basename(file_path))
+        
+        # For PDF and DOCX, try LlamaParse API first
+        if not LLAMAPARSE_API_KEY:
+            logger.error("LLAMAPARSE_API_KEY is not set in environment variables")
+            if file_type == "pdf":
+                # Try fallback for PDF
+                with open(file_path, "rb") as f:
+                    file_content = f.read()
+                return await parse_pdf_fallback(file_content, os.path.basename(file_path))
+            return None
+        
         logger.info(f"Parsing {file_type} document: {file_path}")
         
         with open(file_path, "rb") as file:
@@ -103,10 +133,25 @@ async def parse_document(file_path: str, file_type: str) -> Optional[str]:
                 return result.get("text", "")
             else:
                 logger.error(f"LlamaParse API error: {response.status_code} - {response.text}")
+                # Try fallback for PDF files
+                if file_type == "pdf":
+                    logger.info("Trying fallback PDF processing")
+                    with open(file_path, "rb") as f:
+                        file_content = f.read()
+                    return await parse_pdf_fallback(file_content, os.path.basename(file_path))
                 return None
                 
     except Exception as e:
         logger.error(f"Error parsing document {file_path}: {str(e)}")
+        # Try fallback for PDF files
+        if file_type == "pdf":
+            try:
+                logger.info("Trying fallback PDF processing after error")
+                with open(file_path, "rb") as f:
+                    file_content = f.read()
+                return await parse_pdf_fallback(file_content, os.path.basename(file_path))
+            except Exception as fallback_error:
+                logger.error(f"Fallback PDF processing also failed: {str(fallback_error)}")
         return None
 
 async def parse_pdf_document(file: UploadFile, doc_id: str) -> str:
@@ -122,8 +167,36 @@ async def parse_pdf_document(file: UploadFile, doc_id: str) -> str:
     if not file.filename.lower().endswith('.pdf'):
         raise HTTPException(status_code=400, detail="Only PDF files are supported")
     
-    if not LLAMAPARSE_API_KEY:
-        raise HTTPException(status_code=500, detail="LlamaParse API key is not configured")
+    if not LLAMAPARSE_AVAILABLE or not LLAMAPARSE_API_KEY:
+        logger.info("LlamaParse not available, using fallback PDF processing")
+        update_processing_status(doc_id, {
+            "status": "fallback",
+            "filename": file.filename,
+            "message": "Using fallback PDF processing...",
+            "progress": 30
+        })
+        
+        try:
+            # Use fallback processing directly
+            fallback_content = await parse_pdf_fallback(file_content, file.filename)
+            
+            update_processing_status(doc_id, {
+                "status": "completed",
+                "filename": file.filename,
+                "message": "PDF parsing completed using fallback method.",
+                "progress": 100
+            })
+            
+            return fallback_content
+            
+        except Exception as e:
+            update_processing_status(doc_id, {
+                "status": "error",
+                "filename": file.filename,
+                "message": f"Fallback PDF processing failed: {str(e)}",
+                "progress": 0
+            })
+            raise HTTPException(status_code=500, detail=f"PDF processing failed: {str(e)}")
     
     update_processing_status(doc_id, {
         "status": "starting",
@@ -222,17 +295,40 @@ async def parse_pdf_document(file: UploadFile, doc_id: str) -> str:
                     # Wait before retrying (with exponential backoff)
                     await asyncio.sleep(retry_delay * (2 ** attempt))
                 else:
-                    # This was the last attempt
+                    # This was the last attempt with LlamaParse, try fallback
+                    logger.info(f"LlamaParse failed after {max_retries} attempts, trying fallback methods")
                     update_processing_status(doc_id, {
-                        "status": "error",
+                        "status": "fallback",
                         "filename": file.filename,
-                        "message": f"Failed after {max_retries} attempts: {str(last_error)}",
-                        "progress": 0
+                        "message": "LlamaParse failed, trying fallback PDF processing...",
+                        "progress": 50
                     })
-                    raise HTTPException(
-                        status_code=500,
-                        detail=f"Error processing PDF with LlamaParse after {max_retries} attempts: {str(last_error)}"
-                    )
+                    
+                    try:
+                        # Try fallback PDF processing
+                        fallback_content = await parse_pdf_fallback(file_content, file.filename)
+                        
+                        update_processing_status(doc_id, {
+                            "status": "completed",
+                            "filename": file.filename,
+                            "message": "PDF parsing completed using fallback method.",
+                            "progress": 100
+                        })
+                        
+                        return fallback_content
+                        
+                    except Exception as fallback_error:
+                        # Both LlamaParse and fallback failed
+                        update_processing_status(doc_id, {
+                            "status": "error",
+                            "filename": file.filename,
+                            "message": f"Both LlamaParse and fallback failed. LlamaParse: {str(last_error)}, Fallback: {str(fallback_error)}",
+                            "progress": 0
+                        })
+                        raise HTTPException(
+                            status_code=500,
+                            detail=f"Error processing PDF. LlamaParse failed after {max_retries} attempts: {str(last_error)}. Fallback also failed: {str(fallback_error)}"
+                        )
         
     except HTTPException:
         # Re-raise HTTP exceptions
@@ -396,3 +492,73 @@ async def get_processing_status_stream(doc_id: str) -> AsyncIterable[str]:
                 break
         
         await asyncio.sleep(0.3)  # Faster polling interval for more responsive UI updates
+
+async def parse_pdf_fallback(file_content: bytes, filename: str) -> str:
+    """
+    Parse PDF using local libraries as fallback when LlamaParse is unavailable
+    
+    Args:
+        file_content: Raw PDF file content
+        filename: Name of the file for error reporting
+        
+    Returns:
+        str: Extracted text content
+    """
+    logger.info(f"Using fallback PDF processing for {filename}")
+    
+    text_content = ""
+    
+    # Try pypdf first (newer library)
+    if PYPDF_AVAILABLE:
+        try:
+            logger.info("Attempting PDF processing with pypdf library")
+            pdf_file = io.BytesIO(file_content)
+            reader = PdfReader(pdf_file)
+            
+            for page_num, page in enumerate(reader.pages):
+                try:
+                    page_text = page.extract_text()
+                    if page_text.strip():
+                        text_content += f"\n\n--- Page {page_num + 1} ---\n\n"
+                        text_content += page_text
+                except Exception as e:
+                    logger.warning(f"Error extracting text from page {page_num + 1}: {e}")
+                    
+            if text_content.strip():
+                logger.info(f"Successfully extracted {len(text_content)} characters using pypdf")
+                return text_content
+                
+        except Exception as e:
+            logger.warning(f"pypdf failed: {e}")
+    
+    # Try PyPDF2 as second fallback
+    if PYPDF2_AVAILABLE:
+        try:
+            logger.info("Attempting PDF processing with PyPDF2 library")
+            pdf_file = io.BytesIO(file_content)
+            reader = PyPDF2.PdfReader(pdf_file)
+            
+            for page_num in range(len(reader.pages)):
+                try:
+                    page = reader.pages[page_num]
+                    page_text = page.extract_text()
+                    if page_text.strip():
+                        text_content += f"\n\n--- Page {page_num + 1} ---\n\n"
+                        text_content += page_text
+                except Exception as e:
+                    logger.warning(f"Error extracting text from page {page_num + 1}: {e}")
+                    
+            if text_content.strip():
+                logger.info(f"Successfully extracted {len(text_content)} characters using PyPDF2")
+                return text_content
+                
+        except Exception as e:
+            logger.warning(f"PyPDF2 failed: {e}")
+    
+    # If all fallback methods failed
+    if not text_content.strip():
+        error_msg = "Could not extract text from PDF using available fallback methods"
+        logger.error(error_msg)
+        raise HTTPException(status_code=500, detail=error_msg)
+    
+    return text_content

@@ -21,6 +21,7 @@ wheels/
 *.egg
 MANIFEST
 db_data/
+data/
 # Virtual Environment
 venv/
 env/
