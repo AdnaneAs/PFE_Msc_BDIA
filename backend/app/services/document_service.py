@@ -18,7 +18,7 @@ from app.database.db_setup import (
 )
 from app.services.embedding_service import generate_embedding, generate_embeddings
 from app.services.vector_db_service import add_documents
-from app.services.llamaparse_service import parse_document
+from app.services.llamaparse_service import parse_document, parse_document_with_images
 
 # For CSV/Excel parsing
 import pandas as pd
@@ -158,7 +158,21 @@ SELECT COUNT(*) FROM {table_name};"""
                 )
                 return False
         else:
-            parsed_content = await parse_document(file_path, file_type)
+            # Use enhanced parsing with image extraction for PDF files
+            if file_type == "pdf":
+                parsed_content, image_paths = await parse_document_with_images(file_path, file_type, str(doc_id))
+                
+                # Store image paths in document metadata if any images were extracted
+                if image_paths:
+                    logger.info(f"Extracted {len(image_paths)} images from PDF document {doc_id}")
+                    # You could store image_paths in the document metadata or create a separate images table
+                    # For now, just log the paths
+                    for img_path in image_paths:
+                        logger.info(f"Saved image: {img_path}")
+            else:
+                # For non-PDF files, use regular parsing
+                parsed_content = await parse_document(file_path, file_type)
+                image_paths = []
         if not parsed_content:
             await update_document_status(
                 doc_id, "failed", error_message="Failed to parse document with LlamaParse"

@@ -2,7 +2,7 @@ import os
 import aiofiles
 from tempfile import NamedTemporaryFile
 from fastapi import UploadFile, HTTPException, BackgroundTasks
-from typing import Optional, Dict, List, Any, Callable, AsyncIterable
+from typing import Optional, Dict, List, Any, Callable, AsyncIterable, Tuple
 import asyncio
 from functools import partial
 import json
@@ -11,6 +11,12 @@ import logging
 import httpx
 from dotenv import load_dotenv
 import io
+import uuid
+from pathlib import Path
+import nest_asyncio
+
+# Apply nest_asyncio to allow nested event loops
+nest_asyncio.apply()
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -58,6 +64,10 @@ processing_status = {}
 # Configuration
 # LlamaParse configuration
 LLAMAPARSE_API_URL = os.getenv("LLAMAPARSE_API_URL", "https://api.cloud.llamaindex.ai/api/v1/parsing/upload")
+
+# Image storage configuration
+IMAGES_DIR = os.path.join(os.path.dirname(os.path.dirname(os.path.dirname(__file__))), "data", "images")
+os.makedirs(IMAGES_DIR, exist_ok=True)
 
 def get_parser():
     """Get or create a LlamaParse parser instance"""
@@ -563,3 +573,218 @@ async def parse_pdf_fallback(file_content: bytes, filename: str) -> str:
         raise HTTPException(status_code=500, detail=error_msg)
     
     return text_content
+
+async def parse_document_with_images(file_path: str, file_type: str, document_id: str) -> Tuple[Optional[str], List[str]]:
+    """
+    Enhanced document parsing that extracts both text and images using LlamaParse.
+    
+    Args:
+        file_path: Path to the document file
+        file_type: Type of document (pdf, docx, txt)
+        document_id: Unique identifier for the document
+    
+    Returns:
+        Tuple of (parsed_text_content, list_of_saved_image_paths)
+    """
+    saved_image_paths = []
+    
+    try:
+        # For text files, just read the content (no images)
+        if file_type == "txt":
+            with open(file_path, "r", encoding="utf-8") as f:
+                return f.read(), []
+        
+        # For non-PDF files or when LlamaParse is not available, use regular parsing
+        if file_type != "pdf" or not LLAMAPARSE_AVAILABLE or not LLAMAPARSE_API_KEY:
+            logger.info(f"Using standard parsing for {file_path} (type: {file_type})")
+            text_content = await parse_document(file_path, file_type)
+            return text_content, []
+        
+        logger.info(f"Parsing PDF with image extraction: {file_path}")
+        
+        # Use LlamaParse with enhanced configuration for image extraction
+        parser = LlamaParse(
+            api_key=LLAMAPARSE_API_KEY,
+            result_type="markdown",
+            num_workers=4,
+            verbose=True,
+            language="en"
+        )
+        
+        # Parse the document to get the JobResult object
+        # Run in executor to avoid nested async issues
+        loop = asyncio.get_event_loop()
+        result = await loop.run_in_executor(None, parser.parse, file_path)
+        
+        if not result:
+            logger.warning(f"No result from LlamaParse for {file_path}")
+            return None, []
+        
+        # Extract text content
+        text_content = ""
+        try:
+            # Get markdown documents - run in executor to avoid nested async
+            def get_markdown_docs():
+                return result.get_markdown_documents(split_by_page=True)
+            
+            markdown_documents = await loop.run_in_executor(None, get_markdown_docs)
+            if markdown_documents:
+                text_content = "\n\n".join([doc.text for doc in markdown_documents if hasattr(doc, 'text')])
+                logger.info(f"Extracted {len(markdown_documents)} markdown pages")
+        except Exception as e:
+            logger.warning(f"Error extracting markdown: {e}, trying text documents")
+            try:
+                def get_text_docs():
+                    return result.get_text_documents(split_by_page=False)
+                
+                text_documents = await loop.run_in_executor(None, get_text_docs)
+                if text_documents:
+                    text_content = "\n\n".join([doc.text for doc in text_documents if hasattr(doc, 'text')])
+                    logger.info(f"Extracted {len(text_documents)} text documents")
+            except Exception as e2:
+                logger.error(f"Error extracting text documents: {e2}")
+        
+        # Extract and save images using LlamaParse's built-in image download
+        try:
+            # Create document-specific image directory
+            doc_image_dir = os.path.join(IMAGES_DIR, document_id)
+            os.makedirs(doc_image_dir, exist_ok=True)
+            
+            # Use LlamaParse's get_image_documents method to extract images
+            # Run in executor to avoid nested async issues
+            def extract_images():
+                return result.get_image_documents(
+                    include_screenshot_images=True,  # Include page screenshots
+                    include_object_images=True,      # Include extracted objects (charts, diagrams)
+                    image_download_dir=doc_image_dir  # Download images to our directory
+                )
+            
+            image_documents = await loop.run_in_executor(None, extract_images)
+            
+            if image_documents:
+                logger.info(f"LlamaParse extracted {len(image_documents)} images for document {document_id}")
+                
+                # Process the downloaded images
+                for i, img_doc in enumerate(image_documents):
+                    try:
+                        # Check if the image document has a local path (already downloaded)
+                        if hasattr(img_doc, 'image_path') and img_doc.image_path:
+                            if os.path.exists(img_doc.image_path):
+                                saved_image_paths.append(img_doc.image_path)
+                                logger.info(f"Image downloaded by LlamaParse: {img_doc.image_path}")
+                            else:
+                                logger.warning(f"Image path reported but file not found: {img_doc.image_path}")
+                        
+                        # Check if image has binary data that we need to save manually
+                        elif hasattr(img_doc, 'image') and img_doc.image:
+                            image_filename = f"{document_id}_image_{i+1}_{uuid.uuid4().hex[:8]}.png"
+                            image_path = os.path.join(doc_image_dir, image_filename)
+                            
+                            # Save the image data
+                            with open(image_path, 'wb') as img_file:
+                                if isinstance(img_doc.image, bytes):
+                                    img_file.write(img_doc.image)
+                                else:
+                                    # If it's a PIL Image or similar, convert to bytes
+                                    img_doc.image.save(img_file, format='PNG')
+                            
+                            saved_image_paths.append(image_path)
+                            logger.info(f"Manually saved image: {image_path}")
+                        
+                        # Check for image_data attribute (alternative name)
+                        elif hasattr(img_doc, 'image_data') and img_doc.image_data:
+                            image_filename = f"{document_id}_image_{i+1}_{uuid.uuid4().hex[:8]}.png"
+                            image_path = os.path.join(doc_image_dir, image_filename)
+                            
+                            with open(image_path, 'wb') as img_file:
+                                img_file.write(img_doc.image_data)
+                            
+                            saved_image_paths.append(image_path)
+                            logger.info(f"Saved image from image_data: {image_path}")
+                        
+                        else:
+                            logger.warning(f"Image document {i+1} has no accessible image data or path")
+                            logger.debug(f"Available attributes: {dir(img_doc)}")
+                        
+                    except Exception as img_error:
+                        logger.warning(f"Error processing image {i+1}: {img_error}")
+            
+            else:
+                logger.info(f"No images found in document {document_id}")
+                
+        except Exception as e:
+            logger.warning(f"Error extracting images from {file_path}: {e}")
+            # Continue without images if extraction fails
+        
+        # If no text was extracted, try fallback
+        if not text_content and file_type == "pdf":
+            logger.info("No text extracted with LlamaParse, trying fallback")
+            with open(file_path, "rb") as f:
+                file_content = f.read()
+            fallback_text = await parse_pdf_fallback(file_content, os.path.basename(file_path))
+            return fallback_text, saved_image_paths
+        
+        return text_content, saved_image_paths
+                
+    except Exception as e:
+        logger.error(f"Error in enhanced parsing for {file_path}: {str(e)}")
+        # Try regular parsing as fallback
+        try:
+            text_content = await parse_document(file_path, file_type)
+            return text_content, saved_image_paths
+        except Exception as fallback_error:
+            logger.error(f"Fallback parsing also failed: {fallback_error}")
+            return None, saved_image_paths
+
+def get_document_images(document_id: str) -> List[str]:
+    """
+    Get all image paths associated with a document.
+    
+    Args:
+        document_id: The document identifier
+        
+    Returns:
+        List of image file paths
+    """
+    doc_image_dir = os.path.join(IMAGES_DIR, document_id)
+    
+    if not os.path.exists(doc_image_dir):
+        return []
+    
+    image_paths = []
+    try:
+        for filename in os.listdir(doc_image_dir):
+            if filename.lower().endswith(('.png', '.jpg', '.jpeg', '.gif', '.bmp')):
+                image_paths.append(os.path.join(doc_image_dir, filename))
+        
+        logger.info(f"Found {len(image_paths)} images for document {document_id}")
+        return sorted(image_paths)  # Sort for consistent ordering
+        
+    except Exception as e:
+        logger.error(f"Error listing images for document {document_id}: {e}")
+        return []
+
+def delete_document_images(document_id: str) -> bool:
+    """
+    Delete all images associated with a document.
+    
+    Args:
+        document_id: The document identifier
+        
+    Returns:
+        True if deletion was successful, False otherwise
+    """
+    doc_image_dir = os.path.join(IMAGES_DIR, document_id)
+    
+    if not os.path.exists(doc_image_dir):
+        return True  # Nothing to delete
+    
+    try:
+        import shutil
+        shutil.rmtree(doc_image_dir)
+        logger.info(f"Deleted image directory for document {document_id}")
+        return True
+        
+    except Exception as e:
+        logger.error(f"Error deleting images for document {document_id}: {e}")
+        return False

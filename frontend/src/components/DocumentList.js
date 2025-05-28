@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useCallback } from 'react';
 import { getDocuments, deleteDocument } from '../services/api';
-import { FiFileText, FiTrash2, FiRefreshCw, FiAlertCircle, FiClock, FiCheckCircle, FiX, FiDatabase } from 'react-icons/fi';
+import { FiFileText, FiTrash2, FiRefreshCw, FiAlertCircle, FiClock, FiCheckCircle, FiX, FiDatabase, FiChevronDown, FiChevronRight, FiImage } from 'react-icons/fi';
+import DocumentImages from './DocumentImages';
 
 const DocumentList = ({ refreshTrigger }) => {
   const [documents, setDocuments] = useState([]);
@@ -8,6 +9,7 @@ const DocumentList = ({ refreshTrigger }) => {
   const [error, setError] = useState(null);
   const [deleteConfirm, setDeleteConfirm] = useState(null);
   const [notification, setNotification] = useState(null);
+  const [expandedDocuments, setExpandedDocuments] = useState(new Set());
 
   // Fetch documents on component mount or when refresh is triggered
   const fetchDocuments = useCallback(async () => {
@@ -28,6 +30,19 @@ const DocumentList = ({ refreshTrigger }) => {
   useEffect(() => {
     fetchDocuments();
   }, [fetchDocuments, refreshTrigger]);
+
+  // Toggle document expansion
+  const toggleDocumentExpansion = (documentId) => {
+    setExpandedDocuments(prev => {
+      const newSet = new Set(prev);
+      if (newSet.has(documentId)) {
+        newSet.delete(documentId);
+      } else {
+        newSet.add(documentId);
+      }
+      return newSet;
+    });
+  };
 
   // Handle document deletion
   const handleDelete = async (documentId) => {
@@ -234,55 +249,87 @@ const DocumentList = ({ refreshTrigger }) => {
             </thead>
             <tbody className="bg-white divide-y divide-gray-200">
               {documents.map((doc) => (
-                <tr key={doc.id} className="hover:bg-gray-50">
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <div className="flex items-center">
-                      <FiFileText className="flex-shrink-0 h-5 w-5 text-gray-400" />
-                      <div className="ml-4">
-                        <div className="text-sm font-medium text-gray-900">
-                          {doc.original_name}
-                        </div>
-                        <div className="text-sm text-gray-500">
-                          {doc.file_type}
+                <React.Fragment key={doc.id}>
+                  {/* Main document row */}
+                  <tr className="hover:bg-gray-50">
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <div className="flex items-center">
+                        {/* Expand/collapse button for PDF documents */}
+                        {doc.file_type === 'pdf' && (
+                          <button
+                            onClick={() => toggleDocumentExpansion(doc.id)}
+                            className="mr-2 p-1 rounded hover:bg-gray-200 transition-colors"
+                            title="View extracted images"
+                          >
+                            {expandedDocuments.has(doc.id) ? (
+                              <FiChevronDown className="h-4 w-4 text-gray-500" />
+                            ) : (
+                              <FiChevronRight className="h-4 w-4 text-gray-500" />
+                            )}
+                          </button>
+                        )}
+                        <FiFileText className="flex-shrink-0 h-5 w-5 text-gray-400" />
+                        <div className="ml-4">
+                          <div className="text-sm font-medium text-gray-900">
+                            {doc.original_name}
+                          </div>
+                          <div className="text-sm text-gray-500 flex items-center">
+                            {doc.file_type}
+                            {doc.file_type === 'pdf' && (
+                              <FiImage className="ml-2 h-3 w-3 text-blue-500" title="May contain images" />
+                            )}
+                          </div>
                         </div>
                       </div>
-                    </div>
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap">
-                    <StatusBadge status={doc.status} chunkCount={doc.chunk_count} />
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {formatFileSize(doc.file_size)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
-                    {formatDate(doc.uploaded_at)}
-                  </td>
-                  <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
-                    {deleteConfirm === doc.id ? (
-                      <div className="flex justify-end space-x-2">
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap">
+                      <StatusBadge status={doc.status} chunkCount={doc.chunk_count} />
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatFileSize(doc.file_size)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-sm text-gray-500">
+                      {formatDate(doc.uploaded_at)}
+                    </td>
+                    <td className="px-6 py-4 whitespace-nowrap text-right text-sm font-medium">
+                      {deleteConfirm === doc.id ? (
+                        <div className="flex justify-end space-x-2">
+                          <button
+                            onClick={() => handleDelete(doc.id)}
+                            className="text-red-600 hover:text-red-900"
+                          >
+                            Confirm
+                          </button>
+                          <button
+                            onClick={() => setDeleteConfirm(null)}
+                            className="text-gray-600 hover:text-gray-900"
+                          >
+                            Cancel
+                          </button>
+                        </div>
+                      ) : (
                         <button
-                          onClick={() => handleDelete(doc.id)}
+                          onClick={() => setDeleteConfirm(doc.id)}
                           className="text-red-600 hover:text-red-900"
                         >
-                          Confirm
+                          <FiTrash2 className="h-5 w-5" />
                         </button>
-                        <button
-                          onClick={() => setDeleteConfirm(null)}
-                          className="text-gray-600 hover:text-gray-900"
-                        >
-                          Cancel
-                        </button>
-                      </div>
-                    ) : (
-                      <button
-                        onClick={() => setDeleteConfirm(doc.id)}
-                        className="text-red-600 hover:text-red-900"
-                      >
-                        <FiTrash2 className="h-5 w-5" />
-                      </button>
-                    )}
-                  </td>
-                </tr>
+                      )}
+                    </td>
+                  </tr>
+                  
+                  {/* Expanded content row for images */}
+                  {expandedDocuments.has(doc.id) && (
+                    <tr>
+                      <td colSpan="5" className="px-6 py-4 bg-gray-50 border-t border-gray-200">
+                        <DocumentImages 
+                          documentId={doc.id} 
+                          isVisible={expandedDocuments.has(doc.id)}
+                        />
+                      </td>
+                    </tr>
+                  )}
+                </React.Fragment>
               ))}
             </tbody>
           </table>

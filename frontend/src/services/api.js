@@ -524,3 +524,53 @@ export const deleteDocument = async (documentId) => {
     throw error;
   }
 };
+
+/**
+ * Gets list of images extracted from a document
+ * @param {string} documentId - The document ID
+ * @returns {Promise<Object>} Response with document images metadata
+ * @throws {Error} If the API call fails
+ */
+export const getDocumentImages = async (documentId) => {
+  try {
+    console.log(`Fetching images for document ID: ${documentId}`);
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/documents/${documentId}/images`);
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error(`Error fetching images for document ${documentId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Gets the URL for a specific document image
+ * @param {string} documentId - The document ID
+ * @param {string} imageFilename - The image filename
+ * @returns {string} The complete URL to the image
+ */
+export const getDocumentImageUrl = (documentId, imageFilename) => {
+  return `${API_BASE_URL}/api/documents/${documentId}/images/${imageFilename}`;
+};
+
+/**
+ * Downloads a specific image from a document
+ * @param {string} documentId - The document ID
+ * @param {string} imageFilename - The image filename
+ * @returns {Promise<Blob>} The image blob data
+ * @throws {Error} If the API call fails
+ */
+export const downloadDocumentImage = async (documentId, imageFilename) => {
+  try {
+    console.log(`Downloading image ${imageFilename} for document ID: ${documentId}`);
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/documents/${documentId}/images/${imageFilename}`);
+    
+    if (!response.ok) {
+      throw new Error(`Failed to download image: ${response.status} ${response.statusText}`);
+    }
+    
+    return await response.blob();
+  } catch (error) {
+    console.error(`Error downloading image ${imageFilename} for document ${documentId}:`, error);
+    throw error;
+  }
+};

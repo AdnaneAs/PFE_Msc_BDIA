@@ -1,5 +1,5 @@
 from fastapi import APIRouter, UploadFile, File, HTTPException, BackgroundTasks, Path, Query, status
-from fastapi.responses import JSONResponse, StreamingResponse
+from fastapi.responses import JSONResponse, StreamingResponse, FileResponse
 from typing import List, Optional, Dict, Any
 import asyncio
 import uuid
@@ -16,7 +16,8 @@ from app.services.llamaparse_service import (
     parse_pdf_document, 
     process_pdf_in_background, 
     get_processing_status,
-    get_processing_status_stream
+    get_processing_status_stream,
+    get_document_images
 )
 from app.services.text_processing_service import chunk_text
 from app.services.embedding_service import generate_embeddings
@@ -427,3 +428,102 @@ async def stream_document_status(doc_id: int):
             "X-Accel-Buffering": "no"  # Disable buffering in Nginx if used
         }
     )
+
+@router.get("/{doc_id}/images")
+async def get_document_images_endpoint(doc_id: str):
+    """
+    Get list of images extracted from a document.
+    
+    Args:
+        doc_id: The document ID
+        
+    Returns:
+        List of image metadata including filenames and paths
+    """
+    try:
+        # Check if document exists in database
+        doc = await get_document_by_id(doc_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Get image paths for the document
+        image_paths = get_document_images(doc_id)
+        
+        # Convert paths to relative URLs and metadata
+        images = []
+        for path in image_paths:
+            filename = os.path.basename(path)
+            images.append({
+                "filename": filename,
+                "path": path,
+                "url": f"/api/documents/{doc_id}/images/{filename}",
+                "size": os.path.getsize(path) if os.path.exists(path) else 0
+            })
+        
+        return {
+            "document_id": doc_id,
+            "document_filename": doc["filename"],
+            "image_count": len(images),
+            "images": images
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting images for document {doc_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving document images: {str(e)}")
+
+@router.get("/{doc_id}/images/{image_filename}")
+async def get_document_image_file(doc_id: str, image_filename: str):
+    """
+    Serve a specific image file from a document.
+    
+    Args:
+        doc_id: The document ID
+        image_filename: The image filename
+        
+    Returns:
+        The image file
+    """
+    try:
+        # Check if document exists in database
+        doc = await get_document_by_id(doc_id)
+        if not doc:
+            raise HTTPException(status_code=404, detail="Document not found")
+        
+        # Get image paths for the document
+        image_paths = get_document_images(doc_id)
+        
+        # Find the specific image
+        image_path = None
+        for path in image_paths:
+            if os.path.basename(path) == image_filename:
+                image_path = path
+                break
+        
+        if not image_path or not os.path.exists(image_path):
+            raise HTTPException(status_code=404, detail="Image not found")
+        
+        # Determine media type based on file extension
+        ext = os.path.splitext(image_filename)[1].lower()
+        media_type_map = {
+            '.png': 'image/png',
+            '.jpg': 'image/jpeg',
+            '.jpeg': 'image/jpeg',
+            '.gif': 'image/gif',
+            '.bmp': 'image/bmp'
+        }
+        media_type = media_type_map.get(ext, 'application/octet-stream')
+        
+        # Return the image file
+        return FileResponse(
+            path=image_path,
+            media_type=media_type,
+            filename=image_filename
+        )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error serving image {image_filename} for document {doc_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error serving image: {str(e)}")
