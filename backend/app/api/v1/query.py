@@ -2,7 +2,7 @@ from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from fastapi.responses import StreamingResponse
 from app.models.query_models import QueryRequest, QueryResponse, LLMStatusResponse, StreamingQueryRequest
 from app.services.embedding_service import generate_embedding
-from app.services.vector_db_service import query_documents
+from app.services.vector_db_service import query_documents, query_documents_advanced, get_query_suggestions
 from app.services.llm_service import get_answer_from_llm, get_llm_status, get_available_models
 from app.services.metrics_service import QueryMetricsTracker
 import time
@@ -37,15 +37,28 @@ async def query(request: QueryRequest):
         metrics.mark_retrieval_start()
         query_embedding = generate_embedding(request.question)
         
-        # Query ChromaDB for relevant documents
-        query_results = query_documents(query_embedding)
+        # Use advanced query processing
+        query_results = query_documents_advanced(
+            query_embedding=query_embedding,
+            query_text=request.question,
+            n_results=request.max_sources or 5,
+            search_strategy=request.search_strategy or "semantic"
+        )
         
         documents = query_results["documents"]
         metadatas = query_results["metadatas"]
+        relevance_scores = query_results.get("relevance_scores", [])
+        search_strategy = query_results.get("search_strategy", "semantic")
         
         # Mark the end of retrieval and log metrics
         metrics.mark_retrieval_end(len(documents))
-        logger.info(f"Document retrieval completed, found {len(documents)} relevant documents")
+        logger.info(f"Document retrieval completed using '{search_strategy}', found {len(documents)} relevant documents")
+        
+        # Log relevance metrics
+        if relevance_scores:
+            avg_relevance = sum(relevance_scores) / len(relevance_scores)
+            max_relevance = max(relevance_scores)
+            logger.info(f"Relevance scores - Avg: {avg_relevance:.3f}, Max: {max_relevance:.3f}")
         
         if not documents:
             logger.warning(f"No relevant documents found for query: '{request.question}'")
@@ -70,7 +83,7 @@ async def query(request: QueryRequest):
         # Get final metrics and complete the tracking
         final_metrics = metrics.complete()
         
-        # Return response with answer, sources, and timing information
+        # Return response with enhanced metrics
         return QueryResponse(
             answer=answer,
             sources=metadatas,
@@ -78,7 +91,11 @@ async def query(request: QueryRequest):
             retrieval_time_ms=final_metrics["retrieval_time_ms"],
             llm_time_ms=final_metrics["llm_time_ms"],
             num_sources=len(documents),
-            model=model_info
+            model=model_info,
+            search_strategy=search_strategy,
+            # Calculate average and top relevance (scores are now 0-100)
+            average_relevance=round(sum(relevance_scores) / len(relevance_scores), 1) if relevance_scores else None,
+            top_relevance=round(max(relevance_scores), 1) if relevance_scores else None
         )
         
     except Exception as e:

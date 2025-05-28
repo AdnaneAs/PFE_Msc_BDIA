@@ -4,6 +4,7 @@ import FileUpload from './components/FileUpload';
 import QueryInput from './components/QueryInput';
 import ResultDisplay from './components/ResultDisplay';
 import DocumentList from './components/DocumentList';
+import ConnectionStatus from './components/ConnectionStatus';
 
 function App() {
   const [message, setMessage] = useState('');
@@ -51,6 +52,9 @@ function App() {
 
   return (
     <div className="min-h-screen bg-gray-50 py-8">
+      {/* Connection Status Component */}
+      <ConnectionStatus />
+      
       <div className="container mx-auto px-4">
         <header className="mb-8 text-center">
           <h1 className="text-3xl font-bold text-gray-800">Audit Report Generation Platform v0.2.0</h1>

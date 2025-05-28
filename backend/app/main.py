@@ -44,9 +44,33 @@ async def hello():
     logger.info("Hello endpoint called")
     return {"message": "Backend is running!"}
 
-# Include API routers
+# Health check endpoint
+@app.get("/health")
+async def health_check():
+    logger.info("Health check endpoint called")
+    return {"status": "healthy", "message": "Backend server is running"}
+
+# Include API routers with correct prefixes to match frontend expectations
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 app.include_router(query.router, prefix="/api/query", tags=["query"])
+
+# Add models endpoint for frontend compatibility
+@app.get("/api/query/models") 
+async def get_available_models():
+    logger.info("Models endpoint called")
+    return {
+        "available_models": [
+            "llama3.2:latest",
+            "llama3.2:1b",
+            "llama3.2:3b",
+            "qwen2.5:latest",
+            "qwen2.5:0.5b",
+            "qwen2.5:1.5b",
+            "qwen2.5:3b",
+            "qwen2.5:7b"
+        ],
+        "default_model": "llama3.2:latest"
+    }
 
 # Add startup event to initialize services
 @app.on_event("startup")

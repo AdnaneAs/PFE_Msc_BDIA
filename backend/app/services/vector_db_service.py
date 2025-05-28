@@ -258,3 +258,203 @@ def delete_documents(document_id: str = None, filename: str = None) -> bool:
     except Exception as e:
         logger.error(f"Error deleting documents from vector database: {str(e)}")
         return False
+
+def query_documents_advanced(
+    query_embedding: List[float],
+    query_text: str,
+    n_results: int = TOP_K_RESULTS,
+    collection_name: str = "documents",
+    search_strategy: str = "semantic"  # "semantic", "hybrid", "keyword"
+) -> Dict[str, Any]:
+    """
+    Advanced document querying with multiple search strategies
+    
+    Args:
+        query_embedding: Embedding of the query
+        query_text: Original query text for keyword matching
+        n_results: Number of results to return
+        collection_name: Name of the collection
+        search_strategy: Type of search to perform
+        
+    Returns:
+        Dict[str, Any]: Enhanced query results with relevance scores
+    """
+    collection = get_collection(collection_name)
+    
+    logger.info(f"Advanced querying with strategy '{search_strategy}' for top {n_results} results")
+    
+    if search_strategy == "semantic":
+        # Standard semantic search
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n_results
+        )
+    
+    elif search_strategy == "hybrid":
+        # Combine semantic and keyword search
+        # First get more results for re-ranking
+        initial_results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=min(n_results * 3, 50)  # Get 3x more for re-ranking
+        )
+        
+        # Re-rank based on keyword overlap
+        results = _rerank_results(initial_results, query_text, n_results)
+        
+    elif search_strategy == "keyword":
+        # Keyword-based search using ChromaDB's where clause
+        # Note: This is a simplified implementation
+        try:
+            results = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_results,
+                where_document={"$contains": query_text.lower()}
+            )
+            
+            # If no results found with keyword search, fall back to semantic search
+            if not results.get("documents", [[]])[0]:
+                logger.info(f"No keyword matches for '{query_text}', falling back to semantic search")
+                results = collection.query(
+                    query_embeddings=[query_embedding],
+                    n_results=n_results
+                )
+        except Exception as e:
+            logger.warning(f"Keyword search failed: {e}, falling back to semantic search")
+            results = collection.query(
+                query_embeddings=[query_embedding],
+                n_results=n_results
+            )
+    
+    else:
+        # Default to semantic search
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n_results
+        )
+    
+    # Process and enhance results
+    documents = results.get("documents", [[]])[0]
+    metadatas = results.get("metadatas", [[]])[0]
+    distances = results.get("distances", [[]])[0]
+    ids = results.get("ids", [[]])[0]
+    
+    # Calculate relevance scores (convert distance to similarity)
+    # ChromaDB returns squared Euclidean distances, which can be > 1.0
+    # We need to normalize them to a 0-1 relevance score
+    if distances:
+        # Method 1: Use exponential decay for better score distribution
+        relevance_scores = [max(0.0, min(1.0, 1.0 / (1.0 + dist))) for dist in distances]
+        
+        # Method 2: Alternative - normalize by max distance in this result set
+        # max_dist = max(distances) if distances else 1.0
+        # relevance_scores = [(max_dist - dist) / max_dist for dist in distances]
+        
+        # Ensure scores are in descending order (best match first)
+        # and convert to percentage-like scores (0-100)
+        relevance_scores = [round(score * 100, 2) for score in relevance_scores]
+    else:
+        relevance_scores = []
+    
+    # Add relevance scores to metadata
+    for i, metadata in enumerate(metadatas):
+        if i < len(relevance_scores):
+            metadata['relevance_score'] = relevance_scores[i]
+    
+    # Log enhanced query results
+    logger.info(f"Found {len(documents)} documents with strategy '{search_strategy}'")
+    if relevance_scores:
+        logger.info(f"Top relevance score: {max(relevance_scores):.4f}")
+        logger.info(f"Average relevance: {sum(relevance_scores)/len(relevance_scores):.4f}")
+    
+    # Log top sources with relevance
+    if metadatas:
+        top_sources = []
+        for i, m in enumerate(metadatas[:3]):
+            filename = m.get('filename', 'unknown')
+            chunk_idx = m.get('chunk_index', 0)
+            relevance = m.get('relevance_score', 0)
+            top_sources.append(f"{filename}:{chunk_idx} ({relevance:.3f})")
+        logger.info(f"Top sources: {', '.join(top_sources)}")
+    
+    return {
+        "documents": documents,
+        "metadatas": metadatas,
+        "distances": distances,
+        "ids": ids,
+        "relevance_scores": relevance_scores,
+        "search_strategy": search_strategy  # Ensure this is always returned
+    }
+
+def _rerank_results(initial_results: Dict, query_text: str, n_results: int) -> Dict:
+    """
+    Re-rank search results based on keyword overlap and semantic similarity
+    """
+    documents = initial_results.get("documents", [[]])[0]
+    metadatas = initial_results.get("metadatas", [[]])[0]
+    distances = initial_results.get("distances", [[]])[0]
+    ids = initial_results.get("ids", [[]])[0]
+    
+    if not documents:
+        return initial_results
+    
+    # Calculate keyword overlap scores
+    query_words = set(query_text.lower().split())
+    
+    scored_results = []
+    for i, doc in enumerate(documents):
+        doc_words = set(doc.lower().split())
+        keyword_overlap = len(query_words.intersection(doc_words)) / len(query_words) if query_words else 0
+        
+        # Calculate proper semantic similarity score
+        # Use the same method as the main scoring function
+        semantic_score = max(0.0, min(1.0, 1.0 / (1.0 + distances[i]))) if i < len(distances) else 0
+        combined_score = 0.7 * semantic_score + 0.3 * keyword_overlap
+        
+        scored_results.append({
+            'document': doc,
+            'metadata': metadatas[i] if i < len(metadatas) else {},
+            'distance': distances[i] if i < len(distances) else 1.0,
+            'id': ids[i] if i < len(ids) else '',
+            'combined_score': combined_score,
+            'keyword_overlap': keyword_overlap
+        })
+    
+    # Sort by combined score (descending)
+    scored_results.sort(key=lambda x: x['combined_score'], reverse=True)
+    
+    # Take top n_results
+    top_results = scored_results[:n_results]
+    
+    # Reconstruct the results format
+    return {
+        "documents": [[r['document'] for r in top_results]],
+        "metadatas": [[r['metadata'] for r in top_results]],
+        "distances": [[r['distance'] for r in top_results]],
+        "ids": [[r['id'] for r in top_results]]
+    }
+
+def get_query_suggestions(query_text: str, collection_name: str = "documents") -> List[str]:
+    """
+    Generate query suggestions based on document content
+    """
+    collection = get_collection(collection_name)
+    
+    # Simple implementation: get random document chunks and extract key phrases
+    try:
+        # Get a sample of documents
+        results = collection.get(limit=10)
+        documents = results.get("documents", [])
+        
+        # Extract potential query topics (simplified)
+        suggestions = []
+        for doc in documents[:5]:
+            words = doc.split()
+            if len(words) > 10:
+                # Extract potential question starters
+                suggestions.append(f"What is {' '.join(words[:5])}...?")
+                suggestions.append(f"How does {' '.join(words[:3])} work?")
+        
+        return suggestions[:3]  # Return top 3 suggestions
+    except Exception as e:
+        logger.error(f"Error generating query suggestions: {e}")
+        return []

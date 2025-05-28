@@ -15,6 +15,10 @@ const QueryInput = ({ onQueryResult }) => {
   const [ollamaModels, setOllamaModels] = useState([]);
   const [selectedOllamaModel, setSelectedOllamaModel] = useState('llama3.2:latest');
   
+  // Search strategy states
+  const [searchStrategy, setSearchStrategy] = useState('hybrid'); // Default to hybrid
+  const [maxSources, setMaxSources] = useState(5);
+  
   // Fetch Ollama models on initial load
   useEffect(() => {
     const fetchOllamaModels = async () => {
@@ -130,7 +134,7 @@ const QueryInput = ({ onQueryResult }) => {
       const modelConfig = getCurrentModelConfig();
       
       // Send the query to the backend
-      const result = await submitQuery(question, modelConfig);
+      const result = await submitQuery(question, modelConfig, searchStrategy, maxSources);
       
       // Update status
       setQueryStatus({
@@ -262,6 +266,52 @@ const QueryInput = ({ onQueryResult }) => {
         )}
       </div>
       
+      {/* Search Strategy and Advanced Options */}
+      <div className="mb-6 border-t pt-4">
+        <h3 className="text-sm font-medium text-gray-700 mb-3">Search Configuration</h3>
+        <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
+          <div>
+            <label htmlFor="search-strategy" className="block text-sm font-medium text-gray-700 mb-1">
+              Search Strategy
+            </label>
+            <select
+              id="search-strategy"
+              value={searchStrategy}
+              onChange={(e) => setSearchStrategy(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="hybrid">🔍 Hybrid Search (Recommended)</option>
+              <option value="semantic">🧠 Semantic Search</option>
+              <option value="keyword">🔤 Keyword Search</option>
+            </select>
+            <p className="mt-1 text-xs text-gray-500">
+              {searchStrategy === 'hybrid' && 'Combines semantic understanding with keyword matching for best results'}
+              {searchStrategy === 'semantic' && 'Uses AI to understand meaning and context'}
+              {searchStrategy === 'keyword' && 'Traditional keyword-based search'}
+            </p>
+          </div>
+          <div>
+            <label htmlFor="max-sources" className="block text-sm font-medium text-gray-700 mb-1">
+              Max Sources
+            </label>
+            <select
+              id="max-sources"
+              value={maxSources}
+              onChange={(e) => setMaxSources(parseInt(e.target.value))}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value={3}>3 Sources</option>
+              <option value={5}>5 Sources</option>
+              <option value={10}>10 Sources</option>
+              <option value={15}>15 Sources</option>
+            </select>
+            <p className="mt-1 text-xs text-gray-500">
+              Number of relevant documents to use for generating the answer
+            </p>
+          </div>
+        </div>
+      </div>
+      
       <form onSubmit={handleSubmit}>
         <div className="mb-4">
           <label htmlFor="question" className="block text-sm font-medium text-gray-700 mb-2">
@@ -363,13 +413,39 @@ const QueryInput = ({ onQueryResult }) => {
       {error && (
         <div className="mt-4 p-3 bg-red-50 border border-red-200 text-red-700 rounded-md">
           {error}
+          {error.includes("Backend server is not available") && (
+            <div className="mt-2 text-sm">
+              <p>🔧 <strong>Troubleshooting steps:</strong></p>
+              <ol className="list-decimal pl-5 mt-1 space-y-1">
+                <li>Check if the backend server is running on <code className="bg-gray-100 px-1 rounded">http://localhost:8000</code></li>
+                <li>Ensure Ollama is installed and running with <code className="bg-gray-100 px-1 rounded">ollama run llama3.2:latest</code></li> 
+                <li>Or configure an OpenAI/Gemini API key for cloud models</li>
+                <li>Check your firewall settings and network connection</li>
+              </ol>
+              <div className="mt-2 pt-2 border-t border-red-200">
+                <p className="text-xs text-red-600">
+                  💡 <strong>Backend Status:</strong> The connection indicator in the top-right shows real-time server status
+                </p>
+              </div>
+            </div>
+          )}
+          {error.includes("timed out") && (
+            <div className="mt-2 text-sm">
+              <p>🕐 <strong>Timeout occurred:</strong></p>
+              <ul className="list-disc pl-5 mt-1 space-y-1">
+                <li>The server may be processing a heavy workload</li>
+                <li>Try again in a few moments</li>
+                <li>Consider using a simpler question or fewer sources</li>
+              </ul>
+            </div>
+          )}
           {error.includes("ensure Ollama is running") && (
             <div className="mt-2 text-sm">
-              <p>To fix this issue:</p>
+              <p>🤖 <strong>Ollama Configuration:</strong></p>
               <ol className="list-decimal pl-5 mt-1 space-y-1">
-                <li>Make sure Ollama is installed on your computer</li>
+                <li>Install Ollama from <a href="https://ollama.ai" target="_blank" rel="noopener noreferrer" className="underline">ollama.ai</a></li>
                 <li>Run <code className="bg-gray-100 px-1 rounded">ollama run llama3.2:latest</code> in a terminal</li> 
-                <li>Or set an OpenAI API key in your backend environment</li>
+                <li>Alternatively, set an OpenAI or Gemini API key above</li>
               </ol>
             </div>
           )}

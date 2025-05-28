@@ -7,12 +7,28 @@ class QueryRequest(BaseModel):
         None, 
         description="Configuration for the language model (provider, model name, API key, etc.)"
     )
+    search_strategy: Optional[str] = Field(
+        "semantic",
+        description="Search strategy: 'semantic', 'hybrid', or 'keyword'"
+    )
+    max_sources: Optional[int] = Field(
+        5,
+        description="Maximum number of source documents to retrieve"
+    )
 
 class StreamingQueryRequest(BaseModel):
     question: str = Field(..., description="The question to ask")
     config_for_model: Optional[Dict[str, Any]] = Field(
         None, 
         description="Configuration for the language model (provider, model name, API key, etc.)"
+    )
+    search_strategy: Optional[str] = Field(
+        "semantic",
+        description="Search strategy: 'semantic', 'hybrid', or 'keyword'"
+    )
+    max_sources: Optional[int] = Field(
+        5,
+        description="Maximum number of source documents to retrieve"
     )
 
 class QueryResponse(BaseModel):
@@ -23,6 +39,9 @@ class QueryResponse(BaseModel):
     llm_time_ms: Optional[int] = Field(None, description="Time taken by the LLM in milliseconds")
     num_sources: int = Field(..., description="Number of source documents used")
     model: Optional[str] = Field(None, description="Information about the model used")
+    search_strategy: Optional[str] = Field(None, description="Search strategy used")
+    average_relevance: Optional[float] = Field(None, description="Average relevance score of sources")
+    top_relevance: Optional[float] = Field(None, description="Highest relevance score")
 
 class LLMStatusResponse(BaseModel):
     is_processing: bool = Field(..., description="Whether the LLM is currently processing a request")
@@ -39,4 +58,4 @@ class ModelInfo(BaseModel):
     description: Optional[str] = Field(None, description="Model description")
 
 class ModelsResponse(BaseModel):
-    models: List[ModelInfo] = Field(..., description="List of available models") 
+    models: List[ModelInfo] = Field(..., description="List of available models")

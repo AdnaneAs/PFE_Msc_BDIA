@@ -105,7 +105,17 @@ const ResultDisplay = ({ result }) => {
     );
   }
   
-  const { sources, query_time_ms, retrieval_time_ms, llm_time_ms, num_sources } = result || {};
+  const { 
+    sources, 
+    query_time_ms, 
+    retrieval_time_ms, 
+    llm_time_ms, 
+    num_sources,
+    model,
+    search_strategy,
+    average_relevance,
+    top_relevance
+  } = result || {};
   
   // Format time values for display
   const formatTime = (time) => {
@@ -227,73 +237,156 @@ const ResultDisplay = ({ result }) => {
         </div>
       </div>
       
-      {/* Debug information panel */}
+      {/* Enhanced Performance Metrics Panel */}
       {showDebugInfo && !errorMessage && (
-        <div className="mb-6 p-3 bg-yellow-50 border border-yellow-100 rounded-md text-xs">
-          <h3 className="font-medium text-yellow-800 mb-2 flex items-center">
-            <FiInfo className="mr-1" /> Performance Metrics:
+        <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
+          <h3 className="font-semibold text-blue-800 mb-4 flex items-center text-sm">
+            <FiInfo className="mr-2" /> Performance Analytics
           </h3>
-          <div className="space-y-1 text-yellow-800">
-            {isStreaming ? (
-              <p className="font-semibold text-blue-600">Streaming mode active</p>
-            ) : (
-              <p>Total query time: {formatTime(query_time_ms)}</p>
-            )}
-            <p>Document retrieval time: {formatTime(retrieval_time_ms)}</p>
-            {!isStreaming && <p>LLM processing time: {formatTime(llm_time_ms)}</p>}
-            <p>Number of source documents: {num_sources || 'N/A'}</p>
-            
-            {retrieval_time_ms && llm_time_ms && query_time_ms && !isStreaming && (
-              <div className="mt-2 pt-2 border-t border-yellow-200">
-                <h4 className="font-medium mb-1">Time Distribution:</h4>
-                <div className="w-full h-6 bg-gray-200 rounded-full overflow-hidden flex">
-                  {/* Retrieval time bar */}
-                  <div 
-                    className="bg-blue-500 h-full flex items-center justify-center text-white text-xs"
-                    style={{ width: `${(retrieval_time_ms / query_time_ms) * 100}%` }}
-                  >
-                    {Math.round((retrieval_time_ms / query_time_ms) * 100)}%
-                  </div>
-                  
-                  {/* LLM time bar */}
-                  <div 
-                    className="bg-green-500 h-full flex items-center justify-center text-white text-xs"
-                    style={{ width: `${(llm_time_ms / query_time_ms) * 100}%` }}
-                  >
-                    {Math.round((llm_time_ms / query_time_ms) * 100)}%
-                  </div>
-                  
-                  {/* Overhead time bar */}
-                  <div 
-                    className="bg-gray-400 h-full flex items-center justify-center text-white text-xs"
-                    style={{ width: `${100 - ((retrieval_time_ms + llm_time_ms) / query_time_ms) * 100}%` }}
-                  >
-                    {Math.max(0, Math.round(100 - ((retrieval_time_ms + llm_time_ms) / query_time_ms) * 100))}%
-                  </div>
+          
+          {/* Search Configuration */}
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div className="bg-white p-3 rounded-md shadow-sm">
+              <h4 className="font-medium text-gray-700 mb-2 text-xs">Search Configuration</h4>
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Strategy:</span>
+                  <span className={`font-medium ${
+                    search_strategy === 'hybrid' ? 'text-purple-600' :
+                    search_strategy === 'semantic' ? 'text-blue-600' : 'text-green-600'
+                  }`}>
+                    {search_strategy === 'hybrid' ? '🔍 Hybrid' :
+                     search_strategy === 'semantic' ? '🧠 Semantic' : '🔤 Keyword'}
+                  </span>
                 </div>
-                <div className="flex text-xs mt-1 justify-between">
-                  <span className="text-blue-500">Retrieval</span>
-                  <span className="text-green-500">LLM Processing</span>
-                  <span className="text-gray-500">Overhead</span>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Sources used:</span>
+                  <span className="font-medium text-gray-800">{num_sources || 'N/A'}</span>
+                </div>
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Model:</span>
+                  <span className="font-medium text-gray-800 text-[10px]">{model || 'N/A'}</span>
                 </div>
               </div>
-            )}
+            </div>
             
-            {/* Full source documents list */}
-            {sources && sources.length > 0 && (
-              <div className="mt-3 pt-2 border-t border-yellow-200">
-                <h4 className="font-medium mb-1">Detailed Source Information:</h4>
-                <div className="max-h-40 overflow-y-auto text-xs">
-                  {sources.map((source, index) => (
-                    <div key={index} className="p-1 hover:bg-yellow-100 rounded mb-1">
-                      <p className="font-medium">{source.filename}</p>
-                      <p>Chunk {source.chunk_index + 1} of {source.total_chunks}</p>
-                      {source.doc_id && <p className="text-gray-500">ID: {source.doc_id}</p>}
+            <div className="bg-white p-3 rounded-md shadow-sm">
+              <h4 className="font-medium text-gray-700 mb-2 text-xs">Context Relevance</h4>
+              <div className="space-y-2">
+                {average_relevance !== undefined && top_relevance !== undefined ? (
+                  <>
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-gray-600">Average:</span>
+                        <span className="font-medium">{Math.abs(average_relevance).toFixed(3)}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div 
+                          className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full"
+                          style={{ width: `${Math.min(100, Math.abs(average_relevance) * 100)}%` }}
+                        ></div>
+                      </div>
                     </div>
-                  ))}
-                </div>
+                    <div>
+                      <div className="flex justify-between text-xs mb-1">
+                        <span className="text-gray-600">Best match:</span>
+                        <span className="font-medium">{Math.abs(top_relevance).toFixed(3)}</span>
+                      </div>
+                      <div className="w-full bg-gray-200 rounded-full h-2">
+                        <div 
+                          className="bg-gradient-to-r from-green-400 to-green-600 h-2 rounded-full"
+                          style={{ width: `${Math.min(100, Math.abs(top_relevance) * 100)}%` }}
+                        ></div>
+                      </div>
+                    </div>
+                  </>
+                ) : (
+                  <p className="text-xs text-gray-500">Relevance scores not available</p>
+                )}
               </div>
-            )}
+            </div>
+          </div>
+          
+          {/* Timing Metrics */}
+          <div className="bg-white p-3 rounded-md shadow-sm">
+            <h4 className="font-medium text-gray-700 mb-3 text-xs">Timing Breakdown</h4>
+            <div className="space-y-2 text-xs">
+              {isStreaming ? (
+                <p className="font-semibold text-blue-600">🔄 Streaming mode active</p>
+              ) : (
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Total time:</span>
+                  <span className="font-medium text-gray-800">{formatTime(query_time_ms)}</span>
+                </div>
+              )}
+              <div className="flex justify-between">
+                <span className="text-gray-600">Document retrieval:</span>
+                <span className="font-medium text-blue-600">{formatTime(retrieval_time_ms)}</span>
+              </div>
+              {!isStreaming && (
+                <div className="flex justify-between">
+                  <span className="text-gray-600">LLM processing:</span>
+                  <span className="font-medium text-green-600">{formatTime(llm_time_ms)}</span>
+                </div>
+              )}
+              
+              {retrieval_time_ms && llm_time_ms && query_time_ms && !isStreaming && (
+                <div className="mt-3 pt-2 border-t border-gray-200">
+                  <h5 className="font-medium mb-2 text-gray-700">Time Distribution:</h5>
+                  <div className="w-full h-4 bg-gray-200 rounded-full overflow-hidden flex">
+                    {/* Retrieval time bar */}
+                    <div 
+                      className="bg-blue-500 h-full flex items-center justify-center text-white text-[10px] font-medium"
+                      style={{ width: `${(retrieval_time_ms / query_time_ms) * 100}%` }}
+                      title={`Retrieval: ${formatTime(retrieval_time_ms)}`}
+                    >
+                      {Math.round((retrieval_time_ms / query_time_ms) * 100)}%
+                    </div>
+                    
+                    {/* LLM time bar */}
+                    <div 
+                      className="bg-green-500 h-full flex items-center justify-center text-white text-[10px] font-medium"
+                      style={{ width: `${(llm_time_ms / query_time_ms) * 100}%` }}
+                      title={`LLM: ${formatTime(llm_time_ms)}`}
+                    >
+                      {Math.round((llm_time_ms / query_time_ms) * 100)}%
+                    </div>
+                    
+                    {/* Overhead time bar */}
+                    <div 
+                      className="bg-gray-400 h-full flex items-center justify-center text-white text-[10px] font-medium"
+                      style={{ width: `${100 - ((retrieval_time_ms + llm_time_ms) / query_time_ms) * 100}%` }}
+                      title="Overhead (networking, processing)"
+                    >
+                      {Math.max(0, Math.round(100 - ((retrieval_time_ms + llm_time_ms) / query_time_ms) * 100))}%
+                    </div>
+                  </div>
+                  <div className="flex text-[10px] mt-1 justify-between">
+                    <span className="text-blue-500">🔍 Retrieval</span>
+                    <span className="text-green-500">🤖 LLM Processing</span>
+                    <span className="text-gray-500">⚙️ Overhead</span>
+                  </div>
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Sources display outside performance panel */}
+      {!errorMessage && sources && sources.length > 0 && (
+        <div className="mb-6 bg-white border border-gray-200 rounded-lg p-4">
+          <h3 className="font-semibold text-gray-800 mb-3 flex items-center text-sm">
+            <FiDatabase className="mr-2" /> Source Documents ({sources.length})
+          </h3>
+          <div className="max-h-40 overflow-y-auto text-xs space-y-2">
+            {sources.map((source, index) => (
+              <div key={index} className="p-2 bg-gray-50 hover:bg-gray-100 rounded border">
+                <p className="font-medium text-gray-800">{source.filename}</p>
+                <p className="text-gray-600">Chunk {source.chunk_index + 1} of {source.total_chunks}</p>
+                {source.doc_id && <p className="text-gray-500">ID: {source.doc_id}</p>}
+              </div>
+            ))}
           </div>
         </div>
       )}
