@@ -15,6 +15,10 @@ class QueryRequest(BaseModel):
         5,
         description="Maximum number of source documents to retrieve"
     )
+    use_decomposition: Optional[bool] = Field(
+        True,
+        description="Whether to use query decomposition for complex questions"
+    )
 
 class StreamingQueryRequest(BaseModel):
     question: str = Field(..., description="The question to ask")
@@ -29,6 +33,10 @@ class StreamingQueryRequest(BaseModel):
     max_sources: Optional[int] = Field(
         5,
         description="Maximum number of source documents to retrieve"
+    )
+    use_decomposition: Optional[bool] = Field(
+        True,
+        description="Whether to use query decomposition for complex questions"
     )
 
 class QueryResponse(BaseModel):
@@ -59,3 +67,28 @@ class ModelInfo(BaseModel):
 
 class ModelsResponse(BaseModel):
     models: List[ModelInfo] = Field(..., description="List of available models")
+
+# New models for decomposed queries
+class SubQueryResult(BaseModel):
+    sub_query: str = Field(..., description="The sub-query that was processed")
+    answer: str = Field(..., description="Answer to the sub-query")
+    sources: List[Dict[str, Any]] = Field(..., description="Sources used for this sub-query")
+    num_sources: int = Field(..., description="Number of sources used")
+    relevance_scores: List[float] = Field(..., description="Relevance scores for sources")
+    processing_time_ms: int = Field(..., description="Time taken to process this sub-query")
+    model_info: Optional[str] = Field(None, description="Model information")
+
+class DecomposedQueryResponse(BaseModel):
+    original_query: str = Field(..., description="The original user query")
+    is_decomposed: bool = Field(..., description="Whether the query was decomposed")
+    sub_queries: List[str] = Field(..., description="List of sub-queries (original query if not decomposed)")
+    sub_results: List[SubQueryResult] = Field(..., description="Results for each sub-query")
+    final_answer: str = Field(..., description="Final synthesized answer")
+    total_query_time_ms: int = Field(..., description="Total time for the entire query process")
+    decomposition_time_ms: Optional[int] = Field(None, description="Time taken for decomposition")
+    synthesis_time_ms: Optional[int] = Field(None, description="Time taken for answer synthesis")
+    model: Optional[str] = Field(None, description="Primary model used")
+    search_strategy: Optional[str] = Field(None, description="Search strategy used")
+    total_sources: int = Field(..., description="Total number of unique sources across all sub-queries")
+    average_relevance: Optional[float] = Field(None, description="Average relevance across all sub-queries")
+    top_relevance: Optional[float] = Field(None, description="Highest relevance score across all sub-queries")

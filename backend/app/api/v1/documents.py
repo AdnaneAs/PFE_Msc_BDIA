@@ -527,3 +527,121 @@ async def get_document_image_file(doc_id: str, image_filename: str):
     except Exception as e:
         logger.error(f"Error serving image {image_filename} for document {doc_id}: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error serving image: {str(e)}")
+
+@router.get(
+    "/{doc_id}/chunks",
+    summary="Get all chunks for a document"
+)
+async def get_document_chunks(
+    doc_id: str = Path(..., description="The document ID")
+):
+    """
+    Retrieve all chunks (actual content) for a specific document.
+    This is used by the frontend modal to display source content.
+    """
+    try:
+        # Get the vector database collection
+        collection = get_collection()
+        
+        # Query for all chunks belonging to this document
+        results = collection.get(
+            where={"doc_id": str(doc_id)}
+        )
+        
+        if not results or not results.get("documents"):
+            raise HTTPException(status_code=404, detail=f"No chunks found for document ID {doc_id}")
+        
+        # Extract the data
+        documents = results.get("documents", [])
+        metadatas = results.get("metadatas", [])
+        ids = results.get("ids", [])
+        
+        # Combine into structured response
+        chunks = []
+        for doc_text, metadata, chunk_id in zip(documents, metadatas, ids):
+            chunk_data = {
+                "chunk_id": chunk_id,
+                "content": doc_text,
+                "metadata": metadata,
+                "chunk_index": metadata.get("chunk_index", 0),
+                "filename": metadata.get("filename", "unknown"),
+                "doc_id": metadata.get("doc_id", doc_id),
+                "file_type": metadata.get("file_type", "unknown")
+            }
+            chunks.append(chunk_data)
+        
+        # Sort chunks by chunk_index
+        chunks.sort(key=lambda x: x.get("chunk_index", 0))
+        
+        return {
+            "doc_id": doc_id,
+            "chunk_count": len(chunks),
+            "chunks": chunks
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving chunks for document {doc_id}: {str(e)}")
+        raise HTTPException(status_code=500, detail=f"Error retrieving document chunks: {str(e)}")
+
+@router.get(
+    "/{doc_id}/chunks/{chunk_index}",
+    summary="Get specific chunk content for a document"
+)
+async def get_document_chunk(
+    doc_id: str = Path(..., description="The document ID"),
+    chunk_index: int = Path(..., description="The chunk index")
+):
+    """
+    Retrieve a specific chunk's content for a document.
+    """
+    try:
+        # Get the vector database collection
+        collection = get_collection()
+        
+        # Query for all chunks of this document first, then filter by chunk_index
+        results = collection.get(
+            where={"doc_id": str(doc_id)}
+        )
+        
+        if not results or not results.get("documents"):
+            raise HTTPException(
+                status_code=404, 
+                detail=f"No chunks found for document ID {doc_id}"
+            )
+        
+        # Extract the data
+        documents = results.get("documents", [])
+        metadatas = results.get("metadatas", [])
+        ids = results.get("ids", [])
+        
+        # Find the specific chunk by chunk_index
+        target_chunk = None
+        for doc_text, metadata, chunk_id in zip(documents, metadatas, ids):
+            if metadata.get("chunk_index") == chunk_index:
+                target_chunk = {
+                    "chunk_id": chunk_id,
+                    "content": doc_text,
+                    "metadata": metadata,
+                    "chunk_index": chunk_index,
+                    "doc_id": doc_id
+                }
+                break
+        
+        if target_chunk:
+            return target_chunk
+        else:
+            raise HTTPException(
+                status_code=404, 
+                detail=f"Chunk {chunk_index} not found for document ID {doc_id}"
+            )
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error retrieving chunk {chunk_index} for document {doc_id}: {str(e)}")
+        raise HTTPException(
+            status_code=500, 
+            detail=f"Error retrieving document chunk: {str(e)}"
+        )

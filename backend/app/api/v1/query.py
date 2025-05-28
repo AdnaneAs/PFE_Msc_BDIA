@@ -1,10 +1,11 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from fastapi.responses import StreamingResponse
-from app.models.query_models import QueryRequest, QueryResponse, LLMStatusResponse, StreamingQueryRequest
+from app.models.query_models import QueryRequest, QueryResponse, LLMStatusResponse, StreamingQueryRequest, DecomposedQueryResponse, SubQueryResult
 from app.services.embedding_service import generate_embedding
 from app.services.vector_db_service import query_documents, query_documents_advanced, get_query_suggestions
 from app.services.llm_service import get_answer_from_llm, get_llm_status, get_available_models
 from app.services.metrics_service import QueryMetricsTracker
+from app.services.query_decomposition_service import query_decomposer
 import time
 import json
 import logging
@@ -180,3 +181,172 @@ async def get_models():
     except Exception as e:
         logger.error(f"Error getting available models: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error getting available models: {str(e)}")
+
+
+@router.post(
+    "/decomposed",
+    response_model=DecomposedQueryResponse,
+    summary="Query with intelligent decomposition for complex questions"
+)
+async def query_with_decomposition(request: QueryRequest):
+    """
+    Enhanced query endpoint that automatically decomposes complex questions
+    into sub-queries for better accuracy and comprehensive answers.
+    """
+    start_time = time.time()
+    decomposition_time_ms = None
+    synthesis_time_ms = None
+    
+    try:
+        logger.info(f"Received decomposed query request - Question: '{request.question}'")
+        logger.info(f"Decomposition enabled: {request.use_decomposition}")
+        
+        if request.config_for_model:
+            logger.info(f"Model configuration: {json.dumps(request.config_for_model)}")
+        
+        # Step 1: Query Decomposition (if enabled)
+        if request.use_decomposition:
+            decomp_start = time.time()
+            is_complex, sub_queries = await query_decomposer.decompose_query(
+                request.question, 
+                request.config_for_model
+            )
+            decomposition_time_ms = int((time.time() - decomp_start) * 1000)
+            
+            logger.info(f"Query decomposition completed in {decomposition_time_ms}ms")
+        else:
+            is_complex = False
+            sub_queries = [request.question]
+            logger.info("Query decomposition disabled, treating as simple query")
+        
+        # Step 2: Process each sub-query
+        sub_results = []
+        for sub_query in sub_queries:
+            sub_result = await query_decomposer.process_sub_query(
+                sub_query=sub_query,
+                model_config=request.config_for_model,
+                max_sources=request.max_sources or 5,
+                search_strategy=request.search_strategy or "semantic"
+            )
+            
+            # Convert to SubQueryResult model
+            sub_query_result = SubQueryResult(
+                sub_query=sub_result["sub_query"],
+                answer=sub_result["answer"],
+                sources=sub_result["sources"],
+                num_sources=sub_result["num_sources"],
+                relevance_scores=sub_result["relevance_scores"],
+                processing_time_ms=sub_result["processing_time_ms"],
+                model_info=sub_result.get("model_info")
+            )
+            sub_results.append(sub_query_result)
+        
+        # Step 3: Synthesize final answer (if decomposed)
+        if is_complex and len(sub_results) > 1:
+            synthesis_start = time.time()
+            sub_results_dict = [
+                {
+                    "sub_query": sr.sub_query,
+                    "answer": sr.answer,
+                    "sources": sr.sources,
+                    "num_sources": sr.num_sources,
+                    "relevance_scores": sr.relevance_scores
+                }
+                for sr in sub_results
+            ]
+            
+            final_answer, synthesis_model = await query_decomposer.synthesize_answers(
+                request.question,
+                sub_results_dict,
+                request.config_for_model
+            )
+            synthesis_time_ms = int((time.time() - synthesis_start) * 1000)
+            
+            logger.info(f"Answer synthesis completed in {synthesis_time_ms}ms using {synthesis_model}")
+        else:
+            # For simple queries, use the single answer
+            final_answer = sub_results[0].answer if sub_results else "No answer could be generated."
+            synthesis_model = sub_results[0].model_info if sub_results else "unknown"
+        
+        # Calculate aggregate metrics
+        total_query_time_ms = int((time.time() - start_time) * 1000)
+        
+        # Collect all unique sources
+        all_sources = []
+        all_relevance_scores = []
+        for sub_result in sub_results:
+            all_sources.extend(sub_result.sources)
+            all_relevance_scores.extend(sub_result.relevance_scores)
+        
+        # Remove duplicate sources based on document ID
+        unique_sources = []
+        seen_docs = set()
+        for source in all_sources:
+            doc_id = source.get('document_id', str(source))
+            if doc_id not in seen_docs:
+                unique_sources.append(source)
+                seen_docs.add(doc_id)
+        
+        # Calculate average relevance
+        avg_relevance = round(sum(all_relevance_scores) / len(all_relevance_scores), 1) if all_relevance_scores else None
+        top_relevance = round(max(all_relevance_scores), 1) if all_relevance_scores else None
+        
+        logger.info(f"Decomposed query completed in {total_query_time_ms}ms")
+        logger.info(f"Generated {len(sub_results)} sub-queries, final answer length: {len(final_answer)}")
+        
+        return DecomposedQueryResponse(
+            original_query=request.question,
+            is_decomposed=is_complex,
+            sub_queries=[sr.sub_query for sr in sub_results],
+            sub_results=sub_results,
+            final_answer=final_answer,
+            total_query_time_ms=total_query_time_ms,
+            decomposition_time_ms=decomposition_time_ms,
+            synthesis_time_ms=synthesis_time_ms,
+            model=synthesis_model if is_complex else (sub_results[0].model_info if sub_results else "unknown"),
+            search_strategy=request.search_strategy or "semantic",
+            total_sources=len(unique_sources),
+            average_relevance=avg_relevance,
+            top_relevance=top_relevance
+        )
+        
+    except Exception as e:
+        logger.error(f"Error in decomposed query processing: {e}")
+        
+        # Fallback to regular query processing
+        try:
+            logger.info("Falling back to regular query processing")
+            regular_response = await query(request)
+            
+            # Convert to decomposed format
+            return DecomposedQueryResponse(
+                original_query=request.question,
+                is_decomposed=False,
+                sub_queries=[request.question],
+                sub_results=[
+                    SubQueryResult(
+                        sub_query=request.question,
+                        answer=regular_response.answer,
+                        sources=regular_response.sources,
+                        num_sources=regular_response.num_sources,
+                        relevance_scores=[],
+                        processing_time_ms=regular_response.query_time_ms,
+                        model_info=regular_response.model
+                    )
+                ],
+                final_answer=regular_response.answer,
+                total_query_time_ms=regular_response.query_time_ms,
+                decomposition_time_ms=None,
+                synthesis_time_ms=None,
+                model=regular_response.model,
+                search_strategy=regular_response.search_strategy,
+                total_sources=regular_response.num_sources,
+                average_relevance=regular_response.average_relevance,
+                top_relevance=regular_response.top_relevance
+            )
+        except Exception as fallback_error:
+            logger.error(f"Fallback query also failed: {fallback_error}")
+            raise HTTPException(
+                status_code=500, 
+                detail=f"Query processing failed: {str(e)}. Fallback also failed: {str(fallback_error)}"
+            )

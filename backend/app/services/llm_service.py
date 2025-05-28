@@ -393,7 +393,7 @@ Be accurate, clear, and concise in your responses."""
         llm_status["is_processing"] = False
         return f"Error with Gemini API: {str(e)}", f"gemini/{model} (error)"
 
-def get_answer_from_llm(question: str, context_documents: List[str], model_config: Dict[str, Any] = None) -> tuple:
+def get_answer_from_llm(question: str, context_documents: List[str], model_config: Dict[str, Any] = None, custom_prompt: str = None) -> tuple:
     """
     Get an answer from the LLM based on the context documents
     
@@ -401,6 +401,7 @@ def get_answer_from_llm(question: str, context_documents: List[str], model_confi
         question: User's question
         context_documents: List of relevant document chunks
         model_config: Configuration for the model
+        custom_prompt: Optional custom prompt to override default RAG prompt
         
     Returns:
         tuple: (answer, model_info)
@@ -412,14 +413,22 @@ def get_answer_from_llm(question: str, context_documents: List[str], model_confi
     if model_config:
         logger.info(f"Using model config: {model_config}")
     
-    # Check cache first
-    cache_key = get_cache_key(question, context_documents, model_config)
-    if cache_key in query_cache:
-        logger.info("Using cached response")
-        return query_cache[cache_key], "cached response"
+    if custom_prompt:
+        logger.info("Using custom prompt instead of RAG prompt")
     
-    # Create a prompt with the context
-    prompt = create_prompt_with_context(question, context_documents)
+    # Check cache first (only for non-custom prompts)
+    cache_key = None
+    if not custom_prompt:
+        cache_key = get_cache_key(question, context_documents, model_config)
+        if cache_key in query_cache:
+            logger.info("Using cached response")
+            return query_cache[cache_key], "cached response"
+    
+    # Create a prompt with the context or use custom prompt
+    if custom_prompt:
+        prompt = custom_prompt
+    else:
+        prompt = create_prompt_with_context(question, context_documents)
     
     # Determine which provider to use
     provider = "ollama"  # Default provider
@@ -442,8 +451,8 @@ def get_answer_from_llm(question: str, context_documents: List[str], model_confi
     logger.info(f"LLM response: '{answer[:200]}...' (truncated)")
     logger.info(f"Model info: {model_info}")
     
-    # Cache the result
-    if answer:
+    # Cache the result (only for non-custom prompts)
+    if answer and cache_key:
         query_cache[cache_key] = answer
     
     return answer, model_info

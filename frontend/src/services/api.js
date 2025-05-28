@@ -574,3 +574,145 @@ export const downloadDocumentImage = async (documentId, imageFilename) => {
     throw error;
   }
 };
+
+/**
+ * Submits a query with intelligent decomposition to the backend API
+ * @param {string} question - The question to ask
+ * @param {Object} modelConfig - Configuration for the LLM model
+ * @param {string} searchStrategy - Search strategy: 'semantic', 'hybrid', or 'keyword'
+ * @param {number} maxSources - Maximum number of source documents to retrieve
+ * @param {boolean} useDecomposition - Whether to enable query decomposition
+ * @returns {Promise<Object>} The decomposed response data as a JSON object
+ * @throws {Error} If the API call fails after retries
+ */
+export const submitDecomposedQuery = async (question, modelConfig = {}, searchStrategy = 'hybrid', maxSources = 5, useDecomposition = true) => {
+  try {
+    // Log the decomposed query request
+    console.log(`Submitting decomposed query: "${question}"`);
+    console.log(`Using model config:`, modelConfig);
+    console.log(`Search strategy: ${searchStrategy}, Max sources: ${maxSources}`);
+    console.log(`Decomposition enabled: ${useDecomposition}`);
+    
+    // Check server connection first
+    const serverAvailable = await checkServerConnection();
+    if (!serverAvailable) {
+      throw new Error('Backend server is not available. Please ensure the server is running on http://localhost:8000');
+    }
+    
+    // Start time for performance tracking
+    const startTime = performance.now();
+    
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/query/decomposed`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        question,
+        config_for_model: modelConfig,
+        search_strategy: searchStrategy,
+        max_sources: maxSources,
+        use_decomposition: useDecomposition
+      }),
+    }, 2); // Allow 2 retries for queries
+    
+    // Calculate round-trip time
+    const requestTime = performance.now() - startTime;
+    console.log(`Decomposed query round-trip time: ${requestTime.toFixed(2)}ms`);
+    
+    const result = await handleApiResponse(response);
+    
+    // Log detailed response information
+    console.log(`Decomposed query response received:
+- Original query: "${result.original_query}"
+- Decomposed: ${result.is_decomposed}
+- Sub-queries: ${result.sub_queries ? result.sub_queries.length : 0}
+- Final answer length: ${result.final_answer ? result.final_answer.length : 0} characters
+- Total response time: ${result.total_query_time_ms}ms
+- Decomposition time: ${result.decomposition_time_ms}ms
+- Synthesis time: ${result.synthesis_time_ms}ms
+- Model used: ${result.model}
+- Total sources: ${result.total_sources}
+- Search strategy: ${result.search_strategy}
+- Average relevance: ${result.average_relevance}
+`);
+    
+    // Log sub-query details
+    if (result.sub_results && result.sub_results.length > 0) {
+      console.log('Sub-query breakdown:');
+      result.sub_results.forEach((subResult, index) => {
+        console.log(`  ${index + 1}. "${subResult.sub_query}" -> ${subResult.answer.length} chars, ${subResult.num_sources} sources, ${subResult.processing_time_ms}ms`);
+      });
+    }
+    
+    return result;
+    
+  } catch (error) {
+    console.error(`Error submitting decomposed query "${question}":`, error.message);
+    
+    // Provide detailed error information based on error type
+    let userMessage = 'Failed to get a response from the server';
+    
+    if (error.message.includes('Backend server is not available')) {
+      userMessage = 'Cannot connect to the backend server. Please check if the server is running on http://localhost:8000';
+    } else if (error.message.includes('timed out')) {
+      userMessage = 'The request timed out. The server may be overloaded. Please try again.';
+    } else if (error.status === 500) {
+      userMessage = 'Server error occurred while processing your query. Please try again or contact support.';
+    } else if (error.status === 400) {
+      userMessage = 'Invalid query format. Please check your question and try again.';
+    } else if (error.message.includes('fetch')) {
+      userMessage = 'Network connection error. Please check your internet connection and server status.';
+    }
+    
+    // Return a structured error to be displayed in the UI
+    return {
+      error: true,
+      message: userMessage,
+      original_query: question,
+      is_decomposed: false,
+      sub_queries: [question],
+      sub_results: [],
+      final_answer: `Error: ${userMessage}`,
+      total_query_time_ms: 0,
+      total_sources: 0,
+      search_strategy: searchStrategy,
+      technical_details: error.message // For debugging
+    };
+  }
+};
+
+/**
+ * Gets all chunks (actual content) for a specific document
+ * @param {string} docId - The document ID
+ * @returns {Promise<Object>} Response with document chunks and content
+ * @throws {Error} If the API call fails
+ */
+export const getDocumentChunks = async (docId) => {
+  try {
+    console.log(`Fetching chunks for document ID: ${docId}`);
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/documents/${docId}/chunks`);
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error(`Error fetching chunks for document ${docId}:`, error);
+    throw error;
+  }
+};
+
+/**
+ * Gets specific chunk content for a document
+ * @param {string} docId - The document ID
+ * @param {number} chunkIndex - The chunk index
+ * @returns {Promise<Object>} The chunk data with content
+ * @throws {Error} If the API call fails
+ */
+export const getDocumentChunk = async (docId, chunkIndex) => {
+  try {
+    console.log(`Fetching chunk ${chunkIndex} for document ID: ${docId}`);
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/documents/${docId}/chunks/${chunkIndex}`);
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error(`Error fetching chunk ${chunkIndex} for document ${docId}:`, error);
+    throw error;
+  }
+};

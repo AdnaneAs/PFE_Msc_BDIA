@@ -1,5 +1,5 @@
-import React, { useState, useEffect, useRef } from 'react';
-import { submitQuery, getLLMStatus, getOllamaModels } from '../services/api';
+import React, { useState, useEffect } from 'react';
+import { submitQuery, submitDecomposedQuery, getLLMStatus, getOllamaModels } from '../services/api';
 
 const QueryInput = ({ onQueryResult }) => {
   const [question, setQuestion] = useState('');
@@ -18,6 +18,10 @@ const QueryInput = ({ onQueryResult }) => {
   // Search strategy states
   const [searchStrategy, setSearchStrategy] = useState('hybrid'); // Default to hybrid
   const [maxSources, setMaxSources] = useState(5);
+  
+  // Query decomposition states
+  const [useDecomposition, setUseDecomposition] = useState(false);
+  const [decompositionResult, setDecompositionResult] = useState(null);
   
   // Fetch Ollama models on initial load
   useEffect(() => {
@@ -72,6 +76,7 @@ const QueryInput = ({ onQueryResult }) => {
     setQuestion(e.target.value);
     setError(null);
     setQueryStatus(null);
+    setDecompositionResult(null); // Clear previous decomposition results
   };
 
   const getCurrentModelConfig = () => {
@@ -103,6 +108,85 @@ const QueryInput = ({ onQueryResult }) => {
   };
 
   // Streaming submit handler removed
+
+  const handleSubmitDecomposed = async (e, isRetry = false) => {
+    if (e) e.preventDefault();
+    
+    if (!question.trim()) {
+      setError('Please enter a question');
+      return;
+    }
+    
+    // Check if API key is provided when needed
+    if ((modelProvider === 'openai' || modelProvider === 'gemini') && !apiKey) {
+      setError(`Please enter an API key for ${modelProvider === 'openai' ? 'OpenAI' : 'Gemini'}`);
+      return;
+    }
+    
+    if (!isRetry) {
+      setLoading(true);
+      setError(null);
+      setDecompositionResult(null);
+    }
+    
+    // Update status to show decomposition steps
+    setQueryStatus({
+      state: 'decomposing',
+      message: 'Analyzing query complexity...'
+    });
+    
+    try {
+      // Get current model configuration
+      const modelConfig = getCurrentModelConfig();
+      
+      // Send the query to the decomposed endpoint
+      const result = await submitDecomposedQuery(
+        question, 
+        modelConfig, 
+        searchStrategy, 
+        maxSources, 
+        useDecomposition
+      );
+      
+      console.log("Decomposed query complete. Result:", result);
+      
+      // Store decomposition result for display
+      setDecompositionResult(result);
+      
+      // Update status
+      setQueryStatus({
+        state: 'success',
+        message: result.is_decomposed 
+          ? `Query decomposed into ${result.sub_queries.length} sub-queries and processed successfully!`
+          : 'Query processed as a simple query (no decomposition needed)',
+        queryTime: result.total_query_time_ms,
+        decompositionTime: result.decomposition_time_ms,
+        synthesisTime: result.synthesis_time_ms
+      });
+      
+      if (result) {
+        onQueryResult({
+          ...result,
+          decomposed: true // Flag to indicate this was a decomposed query
+        });
+      } else {
+        onQueryResult({ error: true, message: 'No result returned from backend.' });
+      }
+      
+      // Fetch updated LLM status after query completion
+      fetchLlmStatus();
+    } catch (err) {
+      console.error('Error submitting decomposed query:', err);
+      setError(err.message || 'Error submitting decomposed query');
+      setQueryStatus({
+        state: 'error',
+        message: 'Failed to process decomposed query'
+      });
+      onQueryResult({ error: true, message: err.message || 'Error submitting decomposed query' }); 
+    } finally {
+      setLoading(false);
+    }
+  };
 
   const handleSubmitNormal = async (e, isRetry = false) => {
     if (e) e.preventDefault();
@@ -170,7 +254,11 @@ const QueryInput = ({ onQueryResult }) => {
   };
 
   const handleSubmit = (e) => {
-    handleSubmitNormal(e);
+    if (useDecomposition) {
+      handleSubmitDecomposed(e);
+    } else {
+      handleSubmitNormal(e);
+    }
   };
 
   // Format time values for display
@@ -269,6 +357,34 @@ const QueryInput = ({ onQueryResult }) => {
       {/* Search Strategy and Advanced Options */}
       <div className="mb-6 border-t pt-4">
         <h3 className="text-sm font-medium text-gray-700 mb-3">Search Configuration</h3>
+        
+        {/* Query Decomposition Toggle */}
+        <div className="mb-4 p-3 bg-blue-50 border border-blue-200 rounded-md">
+          <div className="flex items-start space-x-3">
+            <input
+              id="use-decomposition"
+              type="checkbox"
+              checked={useDecomposition}
+              onChange={(e) => setUseDecomposition(e.target.checked)}
+              className="mt-1 h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+            />
+            <div className="flex-1">
+              <label htmlFor="use-decomposition" className="block text-sm font-medium text-blue-800">
+                Enable Query Decomposition (Beta)
+              </label>
+              <p className="mt-1 text-xs text-blue-700">
+                Automatically breaks down complex questions into sub-queries for more comprehensive answers. 
+                Best for multi-part questions or when you need detailed analysis.
+              </p>
+              {useDecomposition && (
+                <div className="mt-2 text-xs text-blue-600 font-medium">
+                  ✨ Your query will be analyzed and potentially split into focused sub-questions
+                </div>
+              )}
+            </div>
+          </div>
+        </div>
+        
         <div className="grid grid-cols-1 md:grid-cols-2 gap-4">
           <div>
             <label htmlFor="search-strategy" className="block text-sm font-medium text-gray-700 mb-1">
@@ -383,14 +499,14 @@ const QueryInput = ({ onQueryResult }) => {
       )}
         {queryStatus && (
         <div className={`mt-4 p-3 rounded-md ${
-          queryStatus.state === 'searching' || queryStatus.state === 'generating'
+          queryStatus.state === 'searching' || queryStatus.state === 'generating' || queryStatus.state === 'decomposing'
             ? 'bg-blue-50 border border-blue-200 text-blue-700'
             : queryStatus.state === 'success'
               ? 'bg-green-50 border border-green-200 text-green-700'
               : 'bg-yellow-50 border border-yellow-200 text-yellow-800'
         }`}>
           <div className="flex items-center">
-            {(queryStatus.state === 'searching' || queryStatus.state === 'generating') && (
+            {(queryStatus.state === 'searching' || queryStatus.state === 'generating' || queryStatus.state === 'decomposing') && (
               <svg className="animate-spin -ml-1 mr-3 h-5 w-5 text-blue-500" xmlns="http://www.w3.org/2000/svg" fill="none" viewBox="0 0 24 24">
                 <circle className="opacity-25" cx="12" cy="12" r="10" stroke="currentColor" strokeWidth="4"></circle>
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
@@ -401,11 +517,53 @@ const QueryInput = ({ onQueryResult }) => {
               {queryStatus.retrievalTime && (
                 <div className="text-xs mt-1">Retrieved documents in {queryStatus.retrievalTime}ms</div>
               )}
+              {queryStatus.decompositionTime && (
+                <div className="text-xs mt-1">Decomposition time: {queryStatus.decompositionTime}ms</div>
+              )}
+              {queryStatus.synthesisTime && (
+                <div className="text-xs mt-1">Synthesis time: {queryStatus.synthesisTime}ms</div>
+              )}
               {queryStatus.queryTime && (
                 <div className="text-xs mt-1">Total query time: {queryStatus.queryTime}ms</div>
               )}
               {/* Streaming response message removed */}
             </div>
+          </div>
+        </div>
+      )}
+      
+      {/* Decomposition Results Display */}
+      {decompositionResult && decompositionResult.is_decomposed && (
+        <div className="mt-4 p-4 bg-purple-50 border border-purple-200 rounded-md">
+          <h4 className="text-sm font-medium text-purple-800 mb-2">Query Decomposition Results</h4>
+          <div className="space-y-3">
+            <div>
+              <p className="text-xs text-purple-700 font-medium">Original Query:</p>
+              <p className="text-sm text-purple-600 italic">"{decompositionResult.original_query}"</p>
+            </div>
+            <div>
+              <p className="text-xs text-purple-700 font-medium">Sub-queries Generated:</p>
+              <ol className="list-decimal list-inside space-y-1 text-sm text-purple-600">
+                {decompositionResult.sub_queries.map((subQuery, index) => (
+                  <li key={index} className="pl-2">{subQuery}</li>
+                ))}
+              </ol>
+            </div>
+            {decompositionResult.sub_results && decompositionResult.sub_results.length > 0 && (
+              <div>
+                <p className="text-xs text-purple-700 font-medium">Sub-query Results:</p>
+                <div className="space-y-2">
+                  {decompositionResult.sub_results.map((subResult, index) => (
+                    <div key={index} className="bg-white p-2 rounded border border-purple-200">
+                      <p className="text-xs font-medium text-purple-800">Q{index + 1}: {subResult.sub_query}</p>
+                      <p className="text-xs text-gray-600 mt-1">
+                        Sources: {subResult.sources_count} | Time: {subResult.query_time_ms}ms
+                      </p>
+                    </div>
+                  ))}
+                </div>
+              </div>
+            )}
           </div>
         </div>
       )}
