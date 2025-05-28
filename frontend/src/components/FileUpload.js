@@ -10,9 +10,12 @@ const FileUpload = ({ onUploadComplete }) => {
   const [processingStatus, setProcessingStatus] = useState({});
   const [debugInfo, setDebugInfo] = useState([]);
   const [dragActive, setDragActive] = useState(false);
+  const [processingActive, setProcessingActive] = useState(false);
+  const [debugExpanded, setDebugExpanded] = useState(false);
   
   const eventSourceRefs = useRef({});
   const fileInputRef = useRef(null);
+  const abortControllerRef = useRef(null);
 
   // Cleanup event sources on component unmount
   useEffect(() => {
@@ -25,16 +28,61 @@ const FileUpload = ({ onUploadComplete }) => {
     };
   }, []);
 
-  // Function to add a debug entry with timestamp
-  const addDebugEntry = (message, color) => {
+  // Monitor uploadResults changes and check if all files are processed
+  useEffect(() => {
+    if (uploadResults.length > 0 && uploading) {
+      console.log('uploadResults changed, triggering checkAllFilesProcessed');
+      
+      // Check if all files are processed inline
+      const allProcessed = uploadResults.every(result => 
+        result.status === 'processed' || result.status === 'error' || result.status === 'cancelled'
+      );
+      
+      console.log('All processed?', allProcessed, 'Upload results length:', uploadResults.length);
+      console.log('Current statuses:', uploadResults.map(r => ({ filename: r.filename, status: r.status })));
+      
+      if (allProcessed && uploadResults.length > 0) {
+        console.log('Setting uploading=false, processingActive=false');
+        setUploading(false);
+        setProcessingActive(false);
+        addDebugEntry('All files processing completed', 'green', 'system', {
+          total: uploadResults.length,
+          successful: uploadResults.filter(r => r.status === 'processed').length,
+          failed: uploadResults.filter(r => r.status === 'error').length,
+          cancelled: uploadResults.filter(r => r.status === 'cancelled').length
+        });
+        
+        // Call the completion callback with all successful document IDs
+        if (onUploadComplete) {
+          const successfulDocIds = uploadResults
+            .filter(result => result.status === 'processed')
+            .map(result => result.docId);
+          
+          if (successfulDocIds.length > 0) {
+            onUploadComplete(successfulDocIds);
+          }
+        }
+      }
+    }
+  }, [uploadResults, uploading, onUploadComplete]);
+
+  // Function to add a debug entry with timestamp and categorization
+  const addDebugEntry = (message, color, category = 'general', details = null) => {
     const timestamp = new Date().toLocaleTimeString();
-    const entry = { message, timestamp, color };
-    console.log(`Upload debug [${timestamp}]: ${message}`);
+    const entry = { 
+      message, 
+      timestamp, 
+      color, 
+      category,
+      details,
+      id: Date.now() + Math.random() // Unique ID for each entry
+    };
+    console.log(`Upload debug [${timestamp}] [${category}]: ${message}`, details || '');
     setDebugInfo(prev => {
-      // Keep only the last 10 entries to avoid performance issues
+      // Keep only the last 25 entries to avoid performance issues
       const newDebugInfo = [...prev, entry];
-      if (newDebugInfo.length > 10) {
-        return newDebugInfo.slice(-10);
+      if (newDebugInfo.length > 25) {
+        return newDebugInfo.slice(-25);
       }
       return newDebugInfo;
     });
@@ -43,6 +91,40 @@ const FileUpload = ({ onUploadComplete }) => {
   // Clear debug logs
   const clearDebugLogs = () => {
     setDebugInfo([]);
+    addDebugEntry('Debug logs cleared', 'blue', 'system');
+  };
+
+  // Stop all processing
+  const stopAllProcessing = () => {
+    addDebugEntry('Stop all processing requested by user', 'red', 'system');
+    
+    // Close all event sources
+    Object.entries(eventSourceRefs.current).forEach(([docId, eventSource]) => {
+      if (eventSource) {
+        addDebugEntry(`Closing event source for document ${docId}`, 'yellow', 'connection');
+        eventSource.close();
+      }
+    });
+    eventSourceRefs.current = {};
+    
+    // Abort any ongoing fetch requests
+    if (abortControllerRef.current) {
+      abortControllerRef.current.abort();
+      addDebugEntry('Aborted ongoing upload requests', 'yellow', 'upload');
+    }
+    
+    // Reset states
+    setUploading(false);
+    setProcessingActive(false);
+    
+    // Mark any pending results as cancelled
+    setUploadResults(prev => prev.map(result => ({
+      ...result,
+      status: result.status === 'pending' || result.status === 'processing' ? 'cancelled' : result.status,
+      error: result.status === 'pending' || result.status === 'processing' ? 'Processing cancelled by user' : result.error
+    })));
+    
+    addDebugEntry('All processing stopped successfully', 'green', 'system');
   };
 
   // Function to determine progress bar color based on status
@@ -77,7 +159,11 @@ const FileUpload = ({ onUploadComplete }) => {
 
   // Setup fallback polling when streaming fails
   const setupStatusPolling = (docId, fileName) => {
-    addDebugEntry(`Setting up status polling for ${fileName}`, 'blue');
+    addDebugEntry(`Setting up status polling for ${fileName}`, 'blue', 'connection', {
+      fileName,
+      docId,
+      fallbackReason: 'EventSource failed'
+    });
     
     const pollInterval = setInterval(async () => {
       try {
@@ -90,7 +176,14 @@ const FileUpload = ({ onUploadComplete }) => {
         }));
         
         const statusColor = getStatusColor(status.status);
-        addDebugEntry(`Poll Status for ${fileName}: ${status.status} - ${status.message}`, statusColor);
+        addDebugEntry(`Poll Status for ${fileName}: ${status.status} - ${status.message}`, statusColor, 'processing', {
+          fileName,
+          docId,
+          status: status.status,
+          progress: status.progress,
+          message: status.message,
+          method: 'polling'
+        });
         
         if (status.status === 'completed') {
           setUploadResults(prev => {
@@ -109,11 +202,15 @@ const FileUpload = ({ onUploadComplete }) => {
             return updatedResults;
           });
           
-          addDebugEntry(`Processing completed for ${fileName}`, 'green');
+          addDebugEntry(`Processing completed for ${fileName}`, 'green', 'processing', {
+            fileName,
+            docId,
+            totalChunks: status.total_chunks,
+            method: 'polling'
+          });
           clearInterval(pollInterval);
           
-          // Check if all files are processed
-          checkAllFilesProcessed();
+          // Don't call checkAllFilesProcessed here - let useEffect handle it
         } else if (status.status === 'error') {
           setUploadResults(prev => {
             const updatedResults = [...prev];
@@ -130,19 +227,27 @@ const FileUpload = ({ onUploadComplete }) => {
             return updatedResults;
           });
           
-          addDebugEntry(`Error processing ${fileName}: ${status.message}`, 'red');
+          addDebugEntry(`Error processing ${fileName}: ${status.message}`, 'red', 'processing', {
+            fileName,
+            docId,
+            error: status.message,
+            method: 'polling'
+          });
           clearInterval(pollInterval);
           
-          // Check if all files are processed or errored
-          checkAllFilesProcessed();
+          // Don't call checkAllFilesProcessed here - let useEffect handle it
         }
       } catch (pollError) {
-        addDebugEntry(`Error polling for status of ${fileName}: ${pollError.message}`, 'red');
+        addDebugEntry(`Error polling for status of ${fileName}: ${pollError.message}`, 'red', 'error', {
+          fileName,
+          docId,
+          error: pollError.message,
+          method: 'polling'
+        });
         console.error(`Error polling for status of ${fileName}:`, pollError);
         clearInterval(pollInterval);
         
-        // Check if all files are processed or errored
-        checkAllFilesProcessed();
+        // Don't call checkAllFilesProcessed here - let useEffect handle it
       }
     }, 2000); // Poll every 2 seconds
     
@@ -151,7 +256,7 @@ const FileUpload = ({ onUploadComplete }) => {
 
   const setupEventSource = (docId, fileName) => {
     try {
-      addDebugEntry(`Setting up event source for ${fileName} (${docId})`, 'blue');
+      addDebugEntry(`Setting up event source for ${fileName} (${docId})`, 'blue', 'connection');
       
       // Close any existing event source for this docId
       if (eventSourceRefs.current[docId]) {
@@ -176,7 +281,13 @@ const FileUpload = ({ onUploadComplete }) => {
           
           // Add to debug info based on status
           const statusColor = getStatusColor(statusData.status);
-          addDebugEntry(`Stream Status for ${fileName}: ${statusData.status} - ${statusData.message}`, statusColor);
+          addDebugEntry(`Stream Status for ${fileName}: ${statusData.status} - ${statusData.message}`, statusColor, 'processing', {
+            fileName,
+            docId,
+            status: statusData.status,
+            progress: statusData.progress,
+            message: statusData.message
+          });
           
           // When processing is complete, set the upload result
           if (statusData.status === 'completed') {
@@ -196,14 +307,17 @@ const FileUpload = ({ onUploadComplete }) => {
               return updatedResults;
             });
             
-            addDebugEntry(`Processing completed for ${fileName}`, 'green');
+            addDebugEntry(`Processing completed for ${fileName}`, 'green', 'processing', {
+              fileName,
+              docId,
+              totalChunks: statusData.total_chunks
+            });
             
             // Close the event source
             eventSource.close();
             delete eventSourceRefs.current[docId];
             
-            // Check if all files are processed
-            checkAllFilesProcessed();
+            // Don't call checkAllFilesProcessed here - let useEffect handle it
           } else if (statusData.status === 'error') {
             setUploadResults(prev => {
               const updatedResults = [...prev];
@@ -220,15 +334,22 @@ const FileUpload = ({ onUploadComplete }) => {
               return updatedResults;
             });
             
-            addDebugEntry(`Error processing ${fileName}: ${statusData.message}`, 'red');
+            addDebugEntry(`Error processing ${fileName}: ${statusData.message}`, 'red', 'processing', {
+              fileName,
+              docId,
+              error: statusData.message
+            });
             eventSource.close();
             delete eventSourceRefs.current[docId];
             
-            // Check if all files are processed or errored
-            checkAllFilesProcessed();
+            // Don't call checkAllFilesProcessed here - let useEffect handle it
           }
         } catch (parseError) {
-          addDebugEntry(`Error parsing status data for ${fileName}: ${parseError.message}`, 'red');
+          addDebugEntry(`Error parsing status data for ${fileName}: ${parseError.message}`, 'red', 'error', {
+            fileName,
+            parseError: parseError.message,
+            rawData: event.data
+          });
           console.error(`Error parsing status data for ${fileName}:`, parseError, event.data);
         }
       };
@@ -236,6 +357,11 @@ const FileUpload = ({ onUploadComplete }) => {
       // Handle errors
       eventSource.onerror = (error) => {
         console.error(`EventSource error for ${fileName}:`, error);
+        addDebugEntry(`Connection error for ${fileName}`, 'red', 'connection', {
+          fileName,
+          docId,
+          error: error.toString()
+        });
         
         // Close the current event source
         eventSource.close();
@@ -244,14 +370,14 @@ const FileUpload = ({ onUploadComplete }) => {
         // Try to reconnect if we haven't exceeded max attempts
         if (reconnectAttempts < maxReconnectAttempts) {
           reconnectAttempts++;
-          addDebugEntry(`Connection lost for ${fileName}, attempting reconnect (${reconnectAttempts}/${maxReconnectAttempts})`, 'yellow');
+          addDebugEntry(`Connection lost for ${fileName}, attempting reconnect (${reconnectAttempts}/${maxReconnectAttempts})`, 'yellow', 'connection');
           
           // Wait a bit before reconnecting
           setTimeout(() => {
             setupEventSource(docId, fileName);
           }, 1000 * reconnectAttempts); // Exponential backoff
         } else {
-          addDebugEntry(`Connection to status stream failed for ${fileName}, using polling instead`, 'red');
+          addDebugEntry(`Connection to status stream failed for ${fileName}, using polling instead`, 'red', 'connection');
           setError(`Error connecting to status stream for ${fileName} - falling back to polling`);
           
           // Fall back to polling
@@ -262,33 +388,15 @@ const FileUpload = ({ onUploadComplete }) => {
       return eventSource;
     } catch (streamError) {
       setError(`Failed to create status stream connection for ${fileName}`);
-      addDebugEntry(`Error creating stream for ${fileName}: ${streamError.message}`, 'red');
+      addDebugEntry(`Error creating stream for ${fileName}: ${streamError.message}`, 'red', 'error', {
+        fileName,
+        docId,
+        error: streamError.message
+      });
       
       // Fall back to polling
       setupStatusPolling(docId, fileName);
       return null;
-    }
-  };
-
-  // Check if all files have been processed
-  const checkAllFilesProcessed = () => {
-    const allProcessed = uploadResults.every(result => 
-      result.status === 'processed' || result.status === 'error'
-    );
-    
-    if (allProcessed && uploadResults.length > 0) {
-      setUploading(false);
-      
-      // Call the completion callback with all successful document IDs
-      if (onUploadComplete) {
-        const successfulDocIds = uploadResults
-          .filter(result => result.status === 'processed')
-          .map(result => result.docId);
-        
-        if (successfulDocIds.length > 0) {
-          onUploadComplete(successfulDocIds);
-        }
-      }
     }
   };
 
@@ -347,11 +455,16 @@ const FileUpload = ({ onUploadComplete }) => {
         return;
       }
       
-      // Check file size (limit to 10MB)
-      if (file.size > 10 * 1024 * 1024) {
-        errorMessages.push(`${file.name}: File is too large. Maximum size is 10MB.`);
-        return;
-      }
+      // File size check removed - no size limit
+      const sizeInMB = (file.size / (1024 * 1024)).toFixed(2);
+      addDebugEntry(`File validated: ${file.name} (${sizeInMB}MB) - No size limit applied`, 'text-green-600', 'upload', {
+        fileName: file.name,
+        fileSize: file.size,
+        fileSizeMB: sizeInMB,
+        fileType: file.type,
+        validation: 'passed',
+        sizeLimit: 'none'
+      });
       
       validFiles.push(file);
     });
@@ -387,25 +500,39 @@ const FileUpload = ({ onUploadComplete }) => {
     
     try {
       setUploading(true);
+      setProcessingActive(true);
       setError(null);
       clearDebugLogs();
       setUploadResults([]);
       setProcessingStatus({});
       
+      // Create abort controller for this upload session
+      abortControllerRef.current = new AbortController();
+      
       // Add first debug entry
-      addDebugEntry('Upload process started', 'blue');
-      addDebugEntry(`Uploading ${files.length} file(s)`, 'blue');
+      addDebugEntry('Upload process started', 'blue', 'system');
+      addDebugEntry(`Uploading ${files.length} file(s)`, 'blue', 'upload', {
+        fileCount: files.length,
+        fileNames: files.map(f => f.name)
+      });
       
       // Upload each file in parallel
       const uploadPromises = files.map(async (file, index) => {
         try {
-          addDebugEntry(`Starting upload for ${file.name}`, 'blue');
+          addDebugEntry(`Starting upload for ${file.name}`, 'blue', 'upload', {
+            fileName: file.name,
+            fileSize: file.size,
+            fileIndex: index + 1
+          });
           
           // Use async upload for better progress tracking
           const result = await uploadDocumentAsync(file);
           
           if (result && result.doc_id) {
-            addDebugEntry(`Upload successful for ${file.name}. Document ID: ${result.doc_id}`, 'green');
+            addDebugEntry(`Upload successful for ${file.name}. Document ID: ${result.doc_id}`, 'green', 'upload', {
+              fileName: file.name,
+              docId: result.doc_id
+            });
             
             // Set up event source for real-time updates
             setupEventSource(result.doc_id, file.name);
@@ -421,7 +548,10 @@ const FileUpload = ({ onUploadComplete }) => {
             throw new Error('Invalid response from server');
           }
         } catch (fileError) {
-          addDebugEntry(`Error uploading ${file.name}: ${fileError.message}`, 'red');
+          addDebugEntry(`Error uploading ${file.name}: ${fileError.message}`, 'red', 'upload', {
+            fileName: file.name,
+            error: fileError.message
+          });
           return {
             filename: file.name,
             status: 'error',
@@ -434,19 +564,31 @@ const FileUpload = ({ onUploadComplete }) => {
       const results = await Promise.all(uploadPromises);
       setUploadResults(results);
       
-      // Check if all files are processed
-      checkAllFilesProcessed();
+      addDebugEntry(`Upload phase completed`, 'green', 'upload', {
+        successful: results.filter(r => r.docId).length,
+        failed: results.filter(r => r.status === 'error').length
+      });
+      
+      // Check if all files failed during upload (no processing needed)
+      const allFailedDuringUpload = results.every(r => r.status === 'error');
+      if (allFailedDuringUpload) {
+        setProcessingActive(false);
+        addDebugEntry('All files failed during upload - no processing to wait for', 'red', 'system');
+      }
       
     } catch (error) {
       setError(`Error during upload: ${error.message}`);
-      addDebugEntry(`Upload process failed: ${error.message}`, 'red');
+      addDebugEntry(`Upload process failed: ${error.message}`, 'red', 'error', { error: error.message });
       setUploading(false);
+      setProcessingActive(false);
     }
   };
 
   // Add a reset function to clear the upload state
   const resetUploadState = () => {
+    addDebugEntry('Resetting upload state', 'blue', 'system');
     setUploading(false);
+    setProcessingActive(false);
     setFiles([]);
     setUploadResults([]);
     setProcessingStatus({});
@@ -555,7 +697,7 @@ const FileUpload = ({ onUploadComplete }) => {
             </button>
           </p>
           <p className="text-sm text-gray-500">
-            Supported formats: PDF, DOCX, TXT, CSV, XLS, XLSX (Max 10MB per file)
+            Supported formats: PDF, DOCX, TXT, CSV, XLS, XLSX (No file size limit)
           </p>
         </div>
         
@@ -703,35 +845,134 @@ const FileUpload = ({ onUploadComplete }) => {
         </div>
       )}
       
-      {/* Visual debugging panel */}
+      {/* Enhanced Visual debugging panel */}
       {debugInfo.length > 0 && (
-        <div className="mt-4 p-3 bg-yellow-50 border border-yellow-200 text-yellow-800 rounded-md overflow-auto max-h-64">
-          <p className="font-semibold mb-2">Processing Debug Info</p>
-          <div className="text-sm">
-            {debugInfo.map((entry, index) => (
-              <div key={index} className={`mb-1 text-${entry.color}-700`}>
-                <span className="font-mono">[{entry.timestamp}]</span> {entry.message}
+        <div className="mt-4 border border-gray-200 rounded-lg overflow-hidden">
+          <div 
+            className="bg-gradient-to-r from-blue-50 to-indigo-50 border-b border-gray-200 p-3 cursor-pointer hover:bg-blue-100 transition-colors"
+            onClick={() => setDebugExpanded(!debugExpanded)}
+          >
+            <div className="flex justify-between items-center">
+              <div className="flex items-center">
+                <span className="font-semibold text-blue-800">Processing Debug Info</span>
+                <span className="ml-2 text-xs bg-blue-200 text-blue-800 px-2 py-1 rounded-full">
+                  {debugInfo.length} entries
+                </span>
               </div>
-            ))}
+              <div className="flex items-center space-x-2">
+                <button
+                  onClick={(e) => {
+                    e.stopPropagation();
+                    clearDebugLogs();
+                  }}
+                  className="text-xs bg-red-100 hover:bg-red-200 text-red-700 px-2 py-1 rounded transition-colors"
+                  title="Clear debug logs"
+                >
+                  Clear
+                </button>
+                <span className={`transform transition-transform ${debugExpanded ? 'rotate-180' : ''}`}>
+                  ▼
+                </span>
+              </div>
+            </div>
           </div>
+          
+          {debugExpanded && (
+            <div className="max-h-80 overflow-auto bg-gray-50">
+              {/* Debug entries grouped by category */}
+              {['system', 'upload', 'connection', 'processing', 'error', 'general'].map(category => {
+                const categoryEntries = debugInfo.filter(entry => entry.category === category);
+                if (categoryEntries.length === 0) return null;
+                
+                return (
+                  <div key={category} className="border-b border-gray-200 last:border-b-0">
+                    <div className="bg-gray-100 px-3 py-2 text-xs font-semibold text-gray-600 uppercase tracking-wide">
+                      {category} ({categoryEntries.length})
+                    </div>
+                    <div className="p-2 space-y-1">
+                      {categoryEntries.map((entry, index) => (
+                        <div 
+                          key={entry.id} 
+                          className={`p-2 rounded text-xs font-mono border-l-4 bg-white ${
+                            entry.color === 'red' ? 'border-red-400 text-red-700' :
+                            entry.color === 'green' ? 'border-green-400 text-green-700' :
+                            entry.color === 'yellow' ? 'border-yellow-400 text-yellow-700' :
+                            'border-blue-400 text-blue-700'
+                          }`}
+                        >
+                          <div className="flex justify-between items-start">
+                            <div className="flex-1">
+                              <span className="text-gray-500">[{entry.timestamp}]</span>
+                              <span className="ml-2">{entry.message}</span>
+                            </div>
+                          </div>
+                          {entry.details && (
+                            <details className="mt-1">
+                              <summary className="cursor-pointer text-gray-500 hover:text-gray-700">
+                                Details
+                              </summary>
+                              <pre className="mt-1 p-2 bg-gray-100 rounded text-xs overflow-x-auto">
+                                {JSON.stringify(entry.details, null, 2)}
+                              </pre>
+                            </details>
+                          )}
+                        </div>
+                      ))}
+                    </div>
+                  </div>
+                );
+              })}
+            </div>
+          )}
         </div>
       )}
       
-      {/* Upload Button */}
-      <div className="flex justify-end">
+      {/* Enhanced Upload/Control Buttons */}
+      <div className="flex justify-end space-x-3">
+        {/* Stop processing button - only show when actively processing */}
+        {processingActive && (
+          <button
+            type="button"
+            onClick={stopAllProcessing}
+            className="px-4 py-2 rounded-md font-medium text-white bg-red-600 hover:bg-red-700 transition-colors flex items-center"
+            title="Stop all processing"
+          >
+            <FiX className="mr-1" size={16} />
+            Stop Processing
+          </button>
+        )}
+        
+        {/* Main action button */}
         <button
           type="button"
-          onClick={uploading ? resetUploadState : handleUpload}
+          onClick={uploading && !processingActive ? resetUploadState : handleUpload}
           disabled={files.length === 0 && !uploading}
-          className={`px-4 py-2 rounded-md font-medium text-white ${
+          className={`px-4 py-2 rounded-md font-medium text-white transition-colors flex items-center ${
             files.length === 0 && !uploading
               ? 'bg-gray-400 cursor-not-allowed'
-              : uploading
+              : uploading && !processingActive
                 ? 'bg-green-600 hover:bg-green-700'
+                : uploading && processingActive
+                  ? 'bg-yellow-600 cursor-wait'
                 : 'bg-blue-600 hover:bg-blue-700'
           }`}
         >
-          {uploading ? 'Done' : `Upload ${files.length > 0 ? files.length : ''} Document${files.length !== 1 ? 's' : ''}`}
+          {uploading && processingActive ? (
+            <>
+              <FiLoader className="mr-1 animate-spin" size={16} />
+              Processing...
+            </>
+          ) : uploading && !processingActive ? (
+            <>
+              <FiCheck className="mr-1" size={16} />
+              Done
+            </>
+          ) : (
+            <>
+              <FiUpload className="mr-1" size={16} />
+              Upload {files.length > 0 ? files.length : ''} Document{files.length !== 1 ? 's' : ''}
+            </>
+          )}
         </button>
       </div>
     </div>

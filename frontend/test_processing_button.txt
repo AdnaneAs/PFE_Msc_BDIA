@@ -1,0 +1,20 @@
+TEST DOCUMENT FOR PROCESSING BUTTON FIX
+==========================================
+
+This is a test document to verify that the processing button correctly changes from:
+1. "Upload X Documents" (initial state)
+2. "Processing..." (with spinner, during upload and processing)
+3. "Done" (with checkmark, after processing is complete)
+
+Test Details:
+- Document: Simple text file
+- Purpose: Verify button state transitions
+- Expected behavior: Button should show "Done" when processing is actually complete
+- Previous issue: Button kept spinning indefinitely
+
+Content:
+This document contains enough text to trigger the processing pipeline but is small enough to process quickly for testing purposes. The system should extract text from this document, process it through the embedding service, and store it in the vector database.
+
+When this processing is complete, the upload button should change from the spinning "Processing..." state to the "Done" state with a checkmark icon.
+
+Test timestamp: May 28, 2025
