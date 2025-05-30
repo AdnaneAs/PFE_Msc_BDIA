@@ -406,14 +406,51 @@ async def stream_document_status(doc_id: int):
     
     async def event_generator():
         try:
-            # Get status from database
+            # Get initial status from database
             current_doc = await get_document_by_id(doc_id)
-            status = {
-                "status": current_doc["status"] if current_doc else "unknown",
-                "progress": 100 if current_doc and current_doc["status"] == "completed" else 50,
-                "message": f"Document {current_doc['status']}" if current_doc else "Unknown"
-            }
-            yield f"data: {json.dumps(status)}\n\n"
+            if current_doc and current_doc["status"] == "completed":
+                # If already completed, send completion status and close
+                status = {
+                    "status": "completed",
+                    "progress": 100,
+                    "message": "Document processing completed"
+                }
+                yield f"data: {json.dumps(status)}\n\n"
+                return
+            
+            # For processing documents, send periodic updates but with backoff
+            last_status = None
+            check_count = 0
+            max_checks = 40  # Maximum 2 minutes of polling
+            
+            while check_count < max_checks:
+                current_doc = await get_document_by_id(doc_id)
+                status = {
+                    "status": current_doc["status"] if current_doc else "unknown",
+                    "progress": 100 if current_doc and current_doc["status"] == "completed" else min(50 + check_count * 2, 90),
+                    "message": f"Document {current_doc['status']}" if current_doc else "Processing..."
+                }
+                
+                # Only send if status changed or it's the first check
+                if status != last_status or check_count == 0:
+                    yield f"data: {json.dumps(status)}\n\n"
+                    last_status = status
+                
+                # Exit if completed or error
+                if current_doc and current_doc["status"] in ["completed", "error"]:
+                    break
+                    
+                check_count += 1
+                
+                # Progressive backoff similar to llamaparse_service
+                if check_count <= 5:
+                    sleep_time = 1.0   # First 5 checks: 1s
+                elif check_count <= 15:
+                    sleep_time = 2.0   # Next 10 checks: 2s
+                else:
+                    sleep_time = 3.0   # Remaining checks: 3s
+                    
+                await asyncio.sleep(sleep_time)
             
         except Exception as e:
             yield f"data: {json.dumps({'status': 'error', 'message': str(e)})}\n\n"

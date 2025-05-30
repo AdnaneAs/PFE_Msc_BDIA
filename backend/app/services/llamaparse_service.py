@@ -76,9 +76,11 @@ def get_parser():
         _parser = LlamaParse(
             api_key=LLAMAPARSE_API_KEY,
             result_type="markdown",
-            num_workers=8,  # Increased for better parallel processing
+            num_workers=4,  # Reduced from 8 to decrease load
             verbose=False,  # Disable verbose to reduce overhead
-            language="en"
+            language="en",
+            show_progress=False,  # Disable progress display
+            max_timeout=120  # Set maximum timeout to avoid endless polling
         )
     return _parser
 
@@ -89,6 +91,18 @@ def update_processing_status(doc_id: str, status: Dict[str, Any]):
 def get_processing_status(doc_id: str) -> Dict[str, Any]:
     """Get the current processing status for a document"""
     return processing_status.get(doc_id, {"status": "unknown"})
+
+async def should_use_fast_processing(file_content: bytes, filename: str) -> bool:
+    """Determine if we should use fast processing for small documents"""
+    file_size_mb = len(file_content) / (1024 * 1024)
+    
+    # Use fast processing for files smaller than 5MB
+    if file_size_mb < 5.0:
+        logger.info(f"Using fast processing for {filename} ({file_size_mb:.2f}MB)")
+        return True
+    
+    logger.info(f"Using standard processing for {filename} ({file_size_mb:.2f}MB)")
+    return False
 
 async def parse_document(file_path: str, file_type: str) -> Optional[str]:
     """
@@ -205,8 +219,7 @@ async def parse_pdf_document(file: UploadFile, doc_id: str) -> str:
                 "status": "error",
                 "filename": file.filename,
                 "message": f"Fallback PDF processing failed: {str(e)}",
-                "progress": 0
-            })
+                "progress": 0            })
             raise HTTPException(status_code=500, detail=f"PDF processing failed: {str(e)}")
     
     update_processing_status(doc_id, {
@@ -227,6 +240,22 @@ async def parse_pdf_document(file: UploadFile, doc_id: str) -> str:
         file_content = await file.read()
         file_info = {"file_name": file.filename}
         
+        # Check if we should use fast processing path for small files
+        use_fast = await should_use_fast_processing(file_content, file.filename)
+        if use_fast:
+            # For small files, try direct fallback processing first (faster)
+            try:
+                fallback_content = await parse_pdf_fallback(file_content, file.filename)
+                update_processing_status(doc_id, {
+                    "status": "completed",
+                    "filename": file.filename,
+                    "message": "PDF parsing completed with fast processing.",
+                    "progress": 100
+                })
+                return fallback_content
+            except Exception as e:
+                logger.warning(f"Fast processing failed, falling back to LlamaParse: {e}")
+        
         # Get parser instance (reuse the same instance)
         parser = get_parser()
         if not parser:
@@ -243,15 +272,22 @@ async def parse_pdf_document(file: UploadFile, doc_id: str) -> str:
                     "status": "parsing",
                     "filename": file.filename,
                     "message": f"Parsing PDF with LlamaParse (attempt {attempt + 1}/{max_retries})...",
-                    "progress": 30 + (attempt * 5)
-                })
+                    "progress": 30 + (attempt * 5)                })
                 
-                # Use a thread pool to avoid blocking the event loop
+                # Use a thread pool to avoid blocking the event loop with optimized timeout
                 loop = asyncio.get_event_loop()
-                result = await loop.run_in_executor(
-                    None, 
-                    partial(parser.parse, file_content, extra_info=file_info)
-                )
+                
+                # Set a reasonable timeout for parsing to avoid endless polling
+                try:
+                    result = await asyncio.wait_for(
+                        loop.run_in_executor(
+                            None, 
+                            partial(parser.parse, file_content, extra_info=file_info)
+                        ),
+                        timeout=90  # 90 second timeout to avoid endless polling
+                    )
+                except asyncio.TimeoutError:
+                    raise Exception("PDF parsing timed out after 90 seconds")
                 
                 # If we get here, parsing was successful
                 update_processing_status(doc_id, {
@@ -488,9 +524,11 @@ async def process_pdf_in_background(
 async def get_processing_status_stream(doc_id: str) -> AsyncIterable[str]:
     """Generate a stream of status updates for the given document ID"""
     prev_status = None
+    max_checks = 60  # Maximum number of status checks (2 minutes total)
+    check_count = 0
     
-    # Check status more frequently for faster updates (0.3 seconds)
-    while True:
+    # Use progressive backoff: start fast, then slow down
+    while check_count < max_checks:
         current_status = get_processing_status(doc_id)
         
         # Only yield if status changed or we've reached completion
@@ -502,7 +540,19 @@ async def get_processing_status_stream(doc_id: str) -> AsyncIterable[str]:
             if current_status.get("status") in ["completed", "error"]:
                 break
         
-        await asyncio.sleep(0.3)  # Faster polling interval for more responsive UI updates
+        check_count += 1
+        
+        # Progressive backoff: 0.5s -> 1s -> 2s -> 3s (max)
+        if check_count <= 10:
+            sleep_time = 0.5  # First 10 checks: 0.5s
+        elif check_count <= 20:
+            sleep_time = 1.0  # Next 10 checks: 1s  
+        elif check_count <= 40:
+            sleep_time = 2.0  # Next 20 checks: 2s
+        else:
+            sleep_time = 3.0  # Remaining checks: 3s
+            
+        await asyncio.sleep(sleep_time)
 
 async def parse_pdf_fallback(file_content: bytes, filename: str) -> str:
     """
