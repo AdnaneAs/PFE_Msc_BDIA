@@ -29,14 +29,17 @@ logger.addHandler(file_handler)
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
 # Default models
 DEFAULT_OLLAMA_MODEL = "llama3.2:latest"
 DEFAULT_OPENAI_MODEL = "gpt-3.5-turbo"
 DEFAULT_GEMINI_MODEL = "gemini-pro"
+DEFAULT_HUGGINGFACE_MODEL = "PleIAs/Pleias-RAG-1B"
 
 logger.info(f"LLM Service initialized. OpenAI API configured: {OPENAI_API_KEY is not None}")
 logger.info(f"Gemini API configured: {GEMINI_API_KEY is not None}")
+logger.info(f"Hugging Face API configured: {HUGGINGFACE_API_KEY is not None}")
 logger.info(f"Ollama endpoint: {OLLAMA_ENDPOINT}")
 
 # Cache to store recent LLM responses
@@ -48,6 +51,29 @@ llm_status = {
     "last_query_time": None,
     "total_queries": 0,
     "successful_queries": 0
+}
+
+# Global model cache to avoid reloading Hugging Face models
+_hf_model_cache = {}
+
+# Model-specific configurations for Hugging Face models
+HUGGINGFACE_MODEL_CONFIGS = {
+    "PleIAs/Pleias-RAG-1B": {
+        "prompt_template": "Question: {prompt}\nAnswer:",
+        "max_new_tokens": 150,
+        "temperature": 0.7,
+        "repetition_penalty": 1.2,
+        "top_p": 0.9,
+        "top_k": 50
+    },
+    "default": {
+        "prompt_template": "{prompt}",
+        "max_new_tokens": 200,
+        "temperature": 0.8,
+        "repetition_penalty": 1.1,
+        "top_p": 0.9,
+        "top_k": 50
+    }
 }
 
 def make_rag_prompt(query: str, relevant_passages: List[str]) -> str:
@@ -169,11 +195,14 @@ def query_ollama_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
         "model": model,
         "prompt": full_prompt,
         "stream": False,
-        # Add options to potentially speed up generation
+        # Add options to speed up generation
         "options": {
             "temperature": 0.1,  # Lower temperature for more deterministic responses
             "top_p": 0.9,
-            "num_predict": 60000  # Limit token generation for faster responses
+            "num_predict": 512,  # Reduced from 60000 for faster responses
+            "num_ctx": 2048,     # Reduced context window for faster processing
+            "top_k": 40,         # Limit top-k sampling for speed
+            "repeat_penalty": 1.1
         }
     }
     
@@ -194,10 +223,10 @@ def query_ollama_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
                 llm_status["is_processing"] = False
                 return f"The model '{model}' is not currently loaded in Ollama. Please run 'ollama pull {model}' first.", f"ollama/{model} (not loaded)"
         
-        # Make the API call
+        # Make the API call with increased timeout for Ollama
         start_time = time.time()
         logger.info("Sending request to Ollama API")
-        response = requests.post(OLLAMA_ENDPOINT, json=payload, timeout=30)
+        response = requests.post(OLLAMA_ENDPOINT, json=payload, timeout=60)  # Increased from 30 to 60
         
         if response.status_code == 200:
             result = response.json().get("response", "")
@@ -374,7 +403,7 @@ Be accurate, clear, and concise in your responses."""
             contents=prompt,
             config=types.GenerateContentConfig(
                 max_output_tokens=60000,
-                temperature=0.1,
+                temperature=0.5,
                 system_instruction=system_instruction
             )
         )
@@ -392,6 +421,263 @@ Be accurate, clear, and concise in your responses."""
         logger.error(f"Error using Gemini: {str(e)}")
         llm_status["is_processing"] = False
         return f"Error with Gemini API: {str(e)}", f"gemini/{model} (error)"
+
+def query_huggingface_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
+    """
+    Query Hugging Face models either locally (using transformers) or via API
+    
+    Args:
+        prompt: The formatted prompt
+        model_config: Configuration for the model
+        
+    Returns:
+        tuple: (LLM response, model info)
+    """
+    global llm_status
+    
+    # Get model from config or use default
+    model = DEFAULT_HUGGINGFACE_MODEL
+    api_key = None  # Start with no API key
+    use_local = True  # Default to local usage
+    
+    if model_config:
+        if 'model' in model_config:
+            model = model_config.get('model')
+        # Only use API if explicitly provided in model_config
+        if 'api_key' in model_config and model_config.get('api_key'):
+            api_key = model_config.get('api_key')
+            use_local = False  # If API key is provided in config, use API
+        if 'use_local' in model_config:
+            use_local = model_config.get('use_local', True)
+    
+    # If still no API key and use_local is False, fall back to environment variable
+    if not use_local and not api_key:
+        api_key = HUGGINGFACE_API_KEY
+    
+    # Update status
+    llm_status["is_processing"] = True
+    llm_status["last_model_used"] = f"huggingface/{model}"
+    llm_status["last_query_time"] = time.time()
+    llm_status["total_queries"] += 1
+    
+    logger.info(f"Querying Hugging Face LLM with model: {model} (local: {use_local})")
+    
+    try:
+        # Try local transformers first if requested or no API key
+        if use_local:
+            try:
+                logger.info("Using local Hugging Face transformers")
+                
+                # Get or load cached model
+                model_data = get_or_load_hf_model(model)
+                tokenizer = model_data['tokenizer']
+                model_obj = model_data['model']
+                
+                # Get model-specific configuration
+                model_config = HUGGINGFACE_MODEL_CONFIGS.get(model, HUGGINGFACE_MODEL_CONFIGS["default"])
+                
+                # Format prompt using model-specific template
+                formatted_prompt = model_config["prompt_template"].format(prompt=prompt)
+                
+                start_time = time.time()
+                
+                # Tokenize input (no padding needed for single input)
+                inputs = tokenizer(
+                    formatted_prompt,
+                    return_tensors="pt",
+                    truncation=True,
+                    max_length=512
+                )
+                
+                # Remove token_type_ids if present (not needed for most causal LM models)
+                if 'token_type_ids' in inputs:
+                    del inputs['token_type_ids']
+                
+                # Move to same device as model
+                device = next(model_obj.parameters()).device
+                inputs = {k: v.to(device) for k, v in inputs.items()}
+                
+                # Generate response with optimized parameters
+                import torch
+                with torch.no_grad():
+                    outputs = model_obj.generate(
+                        **inputs,
+                        max_new_tokens=model_config["max_new_tokens"],
+                        min_new_tokens=10,
+                        do_sample=True,
+                        temperature=model_config["temperature"],
+                        top_p=model_config.get("top_p", 0.9),
+                        top_k=model_config.get("top_k", 50),
+                        repetition_penalty=model_config["repetition_penalty"],
+                        no_repeat_ngram_size=3,
+                        pad_token_id=tokenizer.pad_token_id,
+                        eos_token_id=tokenizer.eos_token_id
+                    )
+                
+                # Decode only the new tokens
+                input_length = inputs['input_ids'].shape[1]
+                generated_tokens = outputs[0][input_length:]
+                generated_text = tokenizer.decode(generated_tokens, skip_special_tokens=True).strip()
+                
+                # Check for problematic output and provide fallback
+                problematic_patterns = ['__', '0/1/', '1/1/', '(1)', '(2)', '(3)']
+                if (not generated_text or 
+                    len(generated_text.strip()) < 10 or 
+                    any(pattern in generated_text for pattern in problematic_patterns) or
+                    generated_text.count('\n') > 5):  # Too many line breaks suggest formatting issues
+                    
+                    generated_text = "I apologize, but I'm having difficulty generating a proper response. Please try rephrasing your question or using a different model."
+                
+                processing_time = time.time() - start_time
+                
+                logger.info(f"Hugging Face (local) responded in {processing_time:.2f} seconds")
+                logger.info(f"Response sample: {generated_text[:100]}...")
+                
+                llm_status["is_processing"] = False
+                llm_status["successful_queries"] += 1
+                return generated_text, f"huggingface/{model} (local)"
+                
+            except ImportError:
+                logger.error("Transformers library not available")
+                llm_status["is_processing"] = False
+                return "Hugging Face transformers library is not installed. Please install it with 'pip install transformers torch accelerate' to use local models.", f"huggingface/{model} (no transformers)"
+            except Exception as e:
+                logger.error(f"Local model failed: {str(e)}")
+                llm_status["is_processing"] = False
+                return f"Local Hugging Face model failed: {str(e)}. Please ensure the transformers library is properly installed with 'pip install transformers torch accelerate'.", f"huggingface/{model} (local error)"
+        
+        # Use API if explicitly requested and API key is available
+        elif api_key:
+            logger.info("Using Hugging Face Inference API")
+            
+            # Hugging Face Inference API endpoint
+            api_url = f"https://api-inference.huggingface.co/models/{model}"
+            
+            headers = {
+                "Authorization": f"Bearer {api_key}",
+                "Content-Type": "application/json"
+            }
+            
+            # For text generation models, the payload format
+            payload = {
+                "inputs": prompt,
+                "parameters": {
+                    "max_new_tokens": 512,
+                    "temperature": 0.1,
+                    "top_p": 0.9,
+                    "do_sample": True,
+                    "return_full_text": False
+                }
+            }
+            
+            start_time = time.time()
+            
+            response = requests.post(api_url, headers=headers, json=payload, timeout=60)
+            
+            if response.status_code == 200:
+                result_data = response.json()
+                
+                # Handle different response formats
+                if isinstance(result_data, list) and len(result_data) > 0:
+                    result = result_data[0].get('generated_text', '')
+                elif isinstance(result_data, dict):
+                    result = result_data.get('generated_text', str(result_data))
+                else:
+                    result = str(result_data)
+                
+                processing_time = time.time() - start_time
+                
+                logger.info(f"Hugging Face API responded in {processing_time:.2f} seconds")
+                logger.info(f"Response sample: {result[:100]}...")
+                
+                llm_status["is_processing"] = False
+                llm_status["successful_queries"] += 1
+                return result, f"huggingface/{model} (api)"
+            else:
+                error_msg = f"Hugging Face API error: {response.status_code}"
+                if response.text:
+                    try:
+                        error_data = response.json()
+                        if 'error' in error_data:
+                            error_msg += f" - {error_data['error']}"
+                    except:
+                        error_msg += f" - {response.text[:200]}"
+                
+                logger.error(error_msg)
+                llm_status["is_processing"] = False
+                return f"Error with Hugging Face API: {error_msg}", f"huggingface/{model} (api error)"
+        else:
+            llm_status["is_processing"] = False
+            return "Hugging Face API key is not configured. Please provide an API key to use Hugging Face models.", f"huggingface/{model} (no api key)"
+            
+    except requests.exceptions.Timeout:
+        logger.error("Timeout when contacting Hugging Face API")
+        llm_status["is_processing"] = False
+        return "The request to Hugging Face timed out. Please try again later.", f"huggingface/{model} (timeout)"
+    except Exception as e:
+        logger.error(f"Error using Hugging Face: {str(e)}")
+        llm_status["is_processing"] = False
+        return f"Error with Hugging Face: {str(e)}", f"huggingface/{model} (error)"
+
+def get_or_load_hf_model(model_name: str):
+    """Get or load a Hugging Face model from cache"""
+    if model_name not in _hf_model_cache:
+        try:
+            from transformers import AutoTokenizer, AutoModelForCausalLM
+            import torch
+            logger.info(f"Loading Hugging Face model: {model_name}")
+            
+            # Create tokenizer
+            tokenizer = AutoTokenizer.from_pretrained(model_name, trust_remote_code=True)
+            
+            # Ensure pad_token is set properly
+            if tokenizer.pad_token is None:
+                tokenizer.pad_token = tokenizer.eos_token
+            
+            # Also ensure pad_token_id is set
+            if tokenizer.pad_token_id is None:
+                tokenizer.pad_token_id = tokenizer.eos_token_id
+            
+            # Load model
+            model = AutoModelForCausalLM.from_pretrained(
+                model_name,
+                trust_remote_code=True,
+                torch_dtype="auto",
+                device_map="auto" if model_name == "PleIAs/Pleias-RAG-1B" else None
+            )
+            
+            _hf_model_cache[model_name] = {
+                'tokenizer': tokenizer,
+                'model': model
+            }
+            logger.info(f"Model {model_name} loaded and cached successfully")
+        except Exception as e:
+            logger.error(f"Failed to load model {model_name}: {str(e)}")
+            raise
+    
+    return _hf_model_cache[model_name]
+
+def warmup_hf_model(model_name: str = None):
+    """Warmup a Hugging Face model by loading it into cache"""
+    if model_name is None:
+        model_name = DEFAULT_HUGGINGFACE_MODEL
+    
+    try:
+        logger.info(f"Warming up Hugging Face model: {model_name}")
+        pipe = get_or_load_hf_model(model_name)
+        
+        # Do a quick test generation to fully warm up the model
+        test_result = pipe(
+            "Hello, this is a test.",
+            max_new_tokens=10,
+            do_sample=False,
+            return_full_text=False
+        )
+        logger.info(f"Model {model_name} warmed up successfully")
+        return True
+    except Exception as e:
+        logger.warning(f"Failed to warm up model {model_name}: {str(e)}")
+        return False
 
 def get_answer_from_llm(question: str, context_documents: List[str], model_config: Dict[str, Any] = None, custom_prompt: str = None) -> tuple:
     """
@@ -444,6 +730,8 @@ def get_answer_from_llm(question: str, context_documents: List[str], model_confi
         answer, model_info = query_openai_llm(prompt, model_config)
     elif provider == "gemini":
         answer, model_info = query_gemini_llm(prompt, model_config)
+    elif provider == "huggingface":
+        answer, model_info = query_huggingface_llm(prompt, model_config)
     else:  # Default to Ollama
         answer, model_info = query_ollama_llm(prompt, model_config)
     
@@ -587,6 +875,23 @@ def get_available_models() -> List[Dict[str, Any]]:
         "name": "gemini-1.5-flash",
         "provider": "gemini",
         "description": "Google - Gemini Pro"
+    })
+    
+    # Add Hugging Face models
+    models.append({
+        "name": "PleIAs/Pleias-RAG-1B",
+        "provider": "huggingface",
+        "description": "Hugging Face - PleIAs RAG 1B (1.2B parameters Small Reasoning Model for RAG and source summarization)"
+    })
+    models.append({
+        "name": "microsoft/DialoGPT-medium",
+        "provider": "huggingface", 
+        "description": "Hugging Face - DialoGPT Medium"
+    })
+    models.append({
+        "name": "meta-llama/Llama-2-7b-chat-hf",
+        "provider": "huggingface",
+        "description": "Hugging Face - Llama 2 7B Chat"
     })
     
     return models

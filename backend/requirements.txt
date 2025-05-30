@@ -27,6 +27,11 @@ google-generativeai
 # Added nest_asyncio to allow nested event loops
 nest_asyncio==1.5.8
 
+# Transformers for local Hugging Face models
+transformers>=4.36.0
+torch>=2.0.0
+accelerate>=0.24.0
+
 # PDF and Vector DB dependencies
 pypdf>=4.0.1
 unstructured>=0.10.0

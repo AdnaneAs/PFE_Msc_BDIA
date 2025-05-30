@@ -14,6 +14,7 @@ const QueryInput = ({ onQueryResult }) => {
   const [apiKey, setApiKey] = useState('');
   const [ollamaModels, setOllamaModels] = useState([]);
   const [selectedOllamaModel, setSelectedOllamaModel] = useState('llama3.2:latest');
+  const [selectedHuggingFaceModel, setSelectedHuggingFaceModel] = useState('PleIAs/Pleias-RAG-1B');
   
   // Search strategy states
   const [searchStrategy, setSearchStrategy] = useState('hybrid'); // Default to hybrid
@@ -98,6 +99,19 @@ const QueryInput = ({ onQueryResult }) => {
         model: 'gemini-2.0-flash',
         api_key: apiKey
       };
+    } else if (modelProvider === 'huggingface') {
+      const config = {
+        provider: 'huggingface',
+        model: selectedHuggingFaceModel,
+        use_local: !apiKey || apiKey.trim() === '' // Use local if no API key provided
+      };
+      
+      // Only add API key if provided
+      if (apiKey && apiKey.trim() !== '') {
+        config.api_key = apiKey;
+      }
+      
+      return config;
     }
     
     // Default fallback
@@ -315,6 +329,19 @@ const QueryInput = ({ onQueryResult }) => {
               Google Gemini
             </label>
           </div>
+          <div className="flex items-center">
+            <input
+              id="huggingface"
+              type="radio"
+              value="huggingface"
+              checked={modelProvider === 'huggingface'}
+              onChange={() => setModelProvider('huggingface')}
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500"
+            />
+            <label htmlFor="huggingface" className="ml-2 block text-sm text-gray-700">
+              Hugging Face
+            </label>
+          </div>
         </div>
         
         {/* Dynamic model options based on selected provider */}
@@ -336,18 +363,39 @@ const QueryInput = ({ onQueryResult }) => {
           </div>
         )}
         
-        {/* API Key input for OpenAI or Gemini */}
-        {(modelProvider === 'openai' || modelProvider === 'gemini') && (
+        {/* Hugging Face model selection */}
+        {modelProvider === 'huggingface' && (
+          <div className="mb-4">
+            <label htmlFor="huggingface-model" className="block text-sm font-medium text-gray-700 mb-1">
+              Hugging Face Model
+            </label>
+            <select
+              id="huggingface-model"
+              value={selectedHuggingFaceModel}
+              onChange={(e) => setSelectedHuggingFaceModel(e.target.value)}
+              className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="PleIAs/Pleias-RAG-1B">PleIAs/Pleias-RAG-1B (1.2B params - RAG specialized)</option>
+              <option value="microsoft/DialoGPT-medium">Microsoft DialoGPT Medium</option>
+              <option value="meta-llama/Llama-2-7b-chat-hf">Llama 2 7B Chat</option>
+              <option value="mistralai/Mistral-7B-Instruct-v0.1">Mistral 7B Instruct</option>
+            </select>
+          </div>
+        )}
+        
+        {/* API Key input for OpenAI, Gemini, or Hugging Face */}
+        {(modelProvider === 'openai' || modelProvider === 'gemini' || modelProvider === 'huggingface') && (
           <div className="mb-4">
             <label htmlFor="api-key" className="block text-sm font-medium text-gray-700 mb-1">
-              {modelProvider === 'openai' ? 'OpenAI' : 'Gemini'} API Key
+              {modelProvider === 'openai' ? 'OpenAI' : modelProvider === 'gemini' ? 'Gemini' : 'Hugging Face'} API Key
+              {modelProvider === 'huggingface' && <span className="text-gray-500 text-xs ml-1">(Optional - will use local model if not provided)</span>}
             </label>
             <input
               id="api-key"
               type="password"
               value={apiKey}
               onChange={(e) => setApiKey(e.target.value)}
-              placeholder={`Enter your ${modelProvider === 'openai' ? 'OpenAI' : 'Gemini'} API key`}
+              placeholder={`Enter your ${modelProvider === 'openai' ? 'OpenAI' : modelProvider === 'gemini' ? 'Gemini' : 'Hugging Face'} API key${modelProvider === 'huggingface' ? ' (optional)' : ''}`}
               className="w-full px-3 py-2 border border-gray-300 rounded-md shadow-sm focus:outline-none focus:ring-blue-500 focus:border-blue-500"
             />
           </div>
@@ -577,7 +625,7 @@ const QueryInput = ({ onQueryResult }) => {
               <ol className="list-decimal pl-5 mt-1 space-y-1">
                 <li>Check if the backend server is running on <code className="bg-gray-100 px-1 rounded">http://localhost:8000</code></li>
                 <li>Ensure Ollama is installed and running with <code className="bg-gray-100 px-1 rounded">ollama run llama3.2:latest</code></li> 
-                <li>Or configure an OpenAI/Gemini API key for cloud models</li>
+                <li>Or configure an OpenAI/Gemini API key or use Hugging Face models (local/API) for cloud models</li>
                 <li>Check your firewall settings and network connection</li>
               </ol>
               <div className="mt-2 pt-2 border-t border-red-200">
@@ -603,7 +651,7 @@ const QueryInput = ({ onQueryResult }) => {
               <ol className="list-decimal pl-5 mt-1 space-y-1">
                 <li>Install Ollama from <a href="https://ollama.ai" target="_blank" rel="noopener noreferrer" className="underline">ollama.ai</a></li>
                 <li>Run <code className="bg-gray-100 px-1 rounded">ollama run llama3.2:latest</code> in a terminal</li> 
-                <li>Alternatively, set an OpenAI or Gemini API key above</li>
+                <li>Alternatively, set an OpenAI, Gemini API key or use Hugging Face models above</li>
               </ol>
             </div>
           )}
