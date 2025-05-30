@@ -28,47 +28,80 @@ def get_chroma_client():
         _client = chromadb.PersistentClient(path=CHROMA_DB_PATH)
     return _client
 
-def get_collection(collection_name: str = "documents"):
+def get_collection(collection_name: str = "documents", model_name: Optional[str] = None):
     """
-    Get or create a collection in ChromaDB
+    Get or create a model-specific collection in ChromaDB
     
     Args:
-        collection_name: Name of the collection
+        collection_name: Base name of the collection
+        model_name: Name of the embedding model (auto-detected if None)
         
     Returns:
         chromadb.Collection: The ChromaDB collection
     """
     client = get_chroma_client()
     
+    # Generate model-specific collection name
+    full_collection_name = get_collection_name_for_model(collection_name, model_name)
+    
     # Get or create collection without specifying an embedding function
-    collection = client.get_or_create_collection(name=collection_name)
+    collection = client.get_or_create_collection(name=full_collection_name)
     
     # Log collection info
     count = collection.count()
-    logger.info(f"Using collection '{collection_name}' with {count} documents")
+    logger.info(f"Using collection '{full_collection_name}' with {count} documents")
     
     return collection
+
+def get_collection_name_for_model(base_collection: str = "documents", model_name: Optional[str] = None) -> str:
+    """
+    Generate a collection name specific to an embedding model
+    
+    Args:
+        base_collection: Base collection name (e.g., "documents")
+        model_name: Name of the embedding model (e.g., "all-MiniLM-L6-v2", "bge-m3")
+        
+    Returns:
+        str: Model-specific collection name
+    """
+    if model_name is None:
+        # Import here to avoid circular imports
+        from app.services.embedding_service import get_current_model_info
+        try:
+            current_model = get_current_model_info()
+            model_name = current_model.get("name", "all-MiniLM-L6-v2")
+        except Exception:
+            # Fallback to default model
+            model_name = "all-MiniLM-L6-v2"
+      # Sanitize model name for collection naming
+    sanitized_model = model_name.replace("-", "_").replace(".", "_").replace("/", "_").lower()
+    collection_name = f"{base_collection}_{sanitized_model}"
+    
+    logger.info(f"Using collection '{collection_name}' for model '{model_name}'")
+    return collection_name
 
 def add_documents(
     texts: List[str], 
     embeddings: List[List[float]], 
     metadatas: List[Dict[str, Any]], 
-    collection_name: str = "documents"
+    collection_name: str = "documents",
+    model_name: Optional[str] = None
 ) -> List[str]:
     """
-    Add documents to ChromaDB
+    Add documents to a model-specific ChromaDB collection
     
     Args:
         texts: List of text chunks
         embeddings: List of pre-computed embeddings
         metadatas: List of metadata dictionaries
-        collection_name: Name of the collection
+        collection_name: Base name of the collection
+        model_name: Name of the embedding model (auto-detected if None)
         
     Returns:
         List[str]: List of IDs of the added documents
     """
-    # Get collection
-    collection = get_collection(collection_name)
+    # Get model-specific collection
+    collection = get_collection(collection_name, model_name)
     
     # Generate unique IDs using UUIDs to avoid conflicts with any existing IDs
     import uuid
@@ -118,21 +151,23 @@ def add_documents(
 def query_documents(
     query_embedding: List[float],
     n_results: int = TOP_K_RESULTS,
-    collection_name: str = "documents"
+    collection_name: str = "documents",
+    model_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Query documents from ChromaDB based on a query embedding
+    Query documents from a model-specific ChromaDB collection based on a query embedding
     
     Args:
         query_embedding: Embedding of the query
         n_results: Number of results to return
-        collection_name: Name of the collection
+        collection_name: Base name of the collection
+        model_name: Name of the embedding model (auto-detected if None)
         
     Returns:
         Dict[str, Any]: Query results containing documents, metadatas, distances, and ids
     """
-    # Get collection
-    collection = get_collection(collection_name)
+    # Get model-specific collection
+    collection = get_collection(collection_name, model_name)
     
     logger.info(f"Querying collection '{collection_name}' for top {n_results} results")
     
@@ -165,18 +200,19 @@ def query_documents(
         "ids": ids
     }
 
-def get_all_vectorized_documents(collection_name: str = "documents") -> List[Dict[str, Any]]:
+def get_all_vectorized_documents(collection_name: str = "documents", model_name: Optional[str] = None) -> List[Dict[str, Any]]:
     """
-    Get all documents from the vector database with their metadata
+    Get all documents from a model-specific vector database collection with their metadata
     
     Args:
-        collection_name: Name of the collection
+        collection_name: Base name of the collection
+        model_name: Name of the embedding model (auto-detected if None)
         
     Returns:
         List[Dict[str, Any]]: List of documents with their metadata
     """
-    # Get collection
-    collection = get_collection(collection_name)
+    # Get model-specific collection
+    collection = get_collection(collection_name, model_name)
     
     # Get all documents
     results = collection.get()
@@ -205,20 +241,21 @@ def get_all_vectorized_documents(collection_name: str = "documents") -> List[Dic
     logger.info(f"Retrieved {len(vectorized_docs)} unique documents from vector database")
     return vectorized_docs
 
-def delete_documents(document_id: str = None, filename: str = None) -> bool:
+def delete_documents(document_id: str = None, filename: str = None, model_name: Optional[str] = None) -> bool:
     """
-    Delete documents from the vector database based on document_id or filename.
+    Delete documents from a model-specific vector database collection based on document_id or filename.
     
     Args:
         document_id: ID of the document to delete
         filename: Name of the file to delete
+        model_name: Name of the embedding model (auto-detected if None)
         
     Returns:
         bool: True if deletion was successful, False otherwise
     """
     try:
-        # Get collection
-        collection = get_collection()
+        # Get model-specific collection
+        collection = get_collection("documents", model_name)
         
         # Build where clause based on provided parameters
         where = {}
@@ -264,22 +301,24 @@ def query_documents_advanced(
     query_text: str,
     n_results: int = TOP_K_RESULTS,
     collection_name: str = "documents",
-    search_strategy: str = "semantic"  # "semantic", "hybrid", "keyword"
+    search_strategy: str = "semantic",  # "semantic", "hybrid", "keyword"
+    model_name: Optional[str] = None
 ) -> Dict[str, Any]:
     """
-    Advanced document querying with multiple search strategies
+    Advanced document querying with multiple search strategies using model-specific collections
     
     Args:
         query_embedding: Embedding of the query
         query_text: Original query text for keyword matching
         n_results: Number of results to return
-        collection_name: Name of the collection
+        collection_name: Base name of the collection
         search_strategy: Type of search to perform
+        model_name: Name of the embedding model (auto-detected if None)
         
     Returns:
         Dict[str, Any]: Enhanced query results with relevance scores
     """
-    collection = get_collection(collection_name)
+    collection = get_collection(collection_name, model_name)
     
     logger.info(f"Advanced querying with strategy '{search_strategy}' for top {n_results} results")
     
@@ -433,11 +472,11 @@ def _rerank_results(initial_results: Dict, query_text: str, n_results: int) -> D
         "ids": [[r['id'] for r in top_results]]
     }
 
-def get_query_suggestions(query_text: str, collection_name: str = "documents") -> List[str]:
+def get_query_suggestions(query_text: str, collection_name: str = "documents", model_name: Optional[str] = None) -> List[str]:
     """
-    Generate query suggestions based on document content
+    Generate query suggestions based on document content from model-specific collection
     """
-    collection = get_collection(collection_name)
+    collection = get_collection(collection_name, model_name)
     
     # Simple implementation: get random document chunks and extract key phrases
     try:
@@ -458,3 +497,88 @@ def get_query_suggestions(query_text: str, collection_name: str = "documents") -
     except Exception as e:
         logger.error(f"Error generating query suggestions: {e}")
         return []
+
+def get_all_model_collections() -> List[str]:
+    """
+    Get all existing embedding model collection names in the database
+    
+    Returns:
+        List[str]: List of all collection names
+    """
+    client = get_chroma_client()
+    try:
+        collections = client.list_collections()
+        collection_names = [col.name for col in collections]
+        logger.info(f"Found {len(collection_names)} collections: {collection_names}")
+        return collection_names
+    except Exception as e:
+        logger.error(f"Error listing collections: {str(e)}")
+        return []
+
+def search_across_all_models(doc_id: str = None, filename: str = None) -> Dict[str, Any]:
+    """
+    Search for documents across all embedding model collections
+    
+    Args:
+        doc_id: Document ID to search for
+        filename: Filename to search for
+        
+    Returns:
+        Dict containing results from all collections
+    """
+    all_results = {}
+    collection_names = get_all_model_collections()
+    
+    for collection_name in collection_names:
+        try:
+            client = get_chroma_client()
+            collection = client.get_collection(name=collection_name)
+            
+            # Build search criteria
+            where = {}
+            if doc_id:
+                where["doc_id"] = str(doc_id)
+            elif filename:
+                where["filename"] = filename
+            
+            if where:
+                results = collection.get(where=where)
+                if results.get("ids"):
+                    all_results[collection_name] = results
+                    
+        except Exception as e:
+            logger.warning(f"Error searching in collection {collection_name}: {str(e)}")
+            continue
+    
+    return all_results
+
+def delete_from_all_models(doc_id: str = None, filename: str = None) -> bool:
+    """
+    Delete documents from all embedding model collections
+    
+    Args:
+        doc_id: Document ID to delete
+        filename: Filename to delete
+        
+    Returns:
+        bool: True if deletion was successful from at least one collection
+    """
+    success = False
+    all_results = search_across_all_models(doc_id=doc_id, filename=filename)
+    
+    for collection_name, results in all_results.items():
+        try:
+            client = get_chroma_client()
+            collection = client.get_collection(name=collection_name)
+            
+            ids_to_delete = results.get("ids", [])
+            if ids_to_delete:
+                collection.delete(ids=ids_to_delete)
+                logger.info(f"Deleted {len(ids_to_delete)} documents from collection {collection_name}")
+                success = True
+                
+        except Exception as e:
+            logger.error(f"Error deleting from collection {collection_name}: {str(e)}")
+            continue
+    
+    return success

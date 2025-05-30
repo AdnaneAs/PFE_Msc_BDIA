@@ -11,7 +11,7 @@ import logging
 from app.models.document_models import DocumentUploadResponse, DocumentResponse, DocumentList
 from app.services.document_service import handle_document_upload
 from app.database.db_setup import get_all_documents, get_document_by_id, delete_document, init_db
-from app.services.vector_db_service import get_all_vectorized_documents, get_collection
+from app.services.vector_db_service import get_all_vectorized_documents, get_collection, search_across_all_models, delete_from_all_models
 from app.services.llamaparse_service import (
     parse_pdf_document, 
     process_pdf_in_background, 
@@ -205,19 +205,13 @@ async def remove_document(
             
             if not vector_doc:
                 raise HTTPException(status_code=404, detail=f"Document with ID {document_id} not found")
-              # Delete from vector database
-            collection = get_collection()
+              # Delete from all embedding model collections
             try:
-                # First, find all matching document chunks using the doc_id
-                results = collection.get(ids=list([str(document_id)]))
-                ids_to_delete = results.get("ids", [])
-                
-                if not ids_to_delete:
-                    logger.warning(f"No vector database documents found with doc_id: {document_id}")
+                success = delete_from_all_models(doc_id=str(document_id))
+                if success:
+                    logger.info(f"Successfully deleted document {document_id} from vector database")
                 else:
-                    # Delete by specific IDs instead of using 'where' clause
-                    status = collection.delete(ids=ids_to_delete)
-                    logger.info(f"Deleted {len(ids_to_delete)} chunks for document {document_id} from vector database status: {status}")
+                    logger.warning(f"No vector database documents found with doc_id: {document_id}")
             except Exception as e:
                 logger.error(f"Error deleting from vector database: {str(e)}")
                 raise HTTPException(status_code=500, detail=f"Error deleting from vector database: {str(e)}")
@@ -226,19 +220,13 @@ async def remove_document(
         
         # If document exists in SQLite, handle both databases
         filename = document.filename
-          # Delete from vector database if it exists there
-        collection = get_collection()
+        # Delete from all embedding model collections
         try:
-            # First, find all matching document chunks using the filename
-            results = collection.get(where={"filename": filename})
-            ids_to_delete = results.get("ids", [])
-            
-            if not ids_to_delete:
-                logger.warning(f"No vector database documents found with filename: {filename}")
+            success = delete_from_all_models(filename=filename)
+            if success:
+                logger.info(f"Successfully deleted document {filename} from vector database")
             else:
-                # Delete by specific IDs instead of using 'where' clause
-                collection.delete(ids=ids_to_delete)
-                logger.info(f"Deleted {len(ids_to_delete)} chunks for document {filename} from vector database")
+                logger.warning(f"No vector database documents found with filename: {filename}")
         except Exception as e:
             logger.error(f"Error deleting from vector database: {str(e)}")
             # Continue with SQLite deletion even if vector DB deletion fails
@@ -577,44 +565,33 @@ async def get_document_chunks(
     This is used by the frontend modal to display source content.
     """
     try:
-        # Get the vector database collection
-        collection = get_collection()
+        # Search across all embedding model collections
+        all_results = search_across_all_models(doc_id=str(doc_id))
         
-        # Query for all chunks belonging to this document
-        results = collection.get(
-            where={"doc_id": str(doc_id)}
-        )
-        
-        if not results or not results.get("documents"):
+        if not all_results:
             raise HTTPException(status_code=404, detail=f"No chunks found for document ID {doc_id}")
         
-        # Extract the data
-        documents = results.get("documents", [])
-        metadatas = results.get("metadatas", [])
-        ids = results.get("ids", [])
+        # Combine results from all collections
+        all_chunks = []
+        for collection_name, results in all_results.items():
+            documents = results.get("documents", [])
+            metadatas = results.get("metadatas", [])
+            ids = results.get("ids", [])
+            
+            for doc_text, metadata, chunk_id in zip(documents, metadatas, ids):
+                chunk = {
+                    "chunk_id": chunk_id,
+                    "content": doc_text,
+                    "metadata": metadata,
+                    "doc_id": doc_id,
+                    "collection": collection_name  # Track which model collection this came from
+                }
+                all_chunks.append(chunk)
         
-        # Combine into structured response
-        chunks = []
-        for doc_text, metadata, chunk_id in zip(documents, metadatas, ids):
-            chunk_data = {
-                "chunk_id": chunk_id,
-                "content": doc_text,
-                "metadata": metadata,
-                "chunk_index": metadata.get("chunk_index", 0),
-                "filename": metadata.get("filename", "unknown"),
-                "doc_id": metadata.get("doc_id", doc_id),
-                "file_type": metadata.get("file_type", "unknown")
-            }
-            chunks.append(chunk_data)
+        # Sort chunks by chunk_index if available
+        all_chunks.sort(key=lambda x: x["metadata"].get("chunk_index", 0))
         
-        # Sort chunks by chunk_index
-        chunks.sort(key=lambda x: x.get("chunk_index", 0))
-        
-        return {
-            "doc_id": doc_id,
-            "chunk_count": len(chunks),
-            "chunks": chunks
-        }
+        return {"chunks": all_chunks, "total_chunks": len(all_chunks)}
         
     except HTTPException:
         raise
@@ -634,36 +611,35 @@ async def get_document_chunk(
     Retrieve a specific chunk's content for a document.
     """
     try:
-        # Get the vector database collection
-        collection = get_collection()
+        # Search across all embedding model collections
+        all_results = search_across_all_models(doc_id=str(doc_id))
         
-        # Query for all chunks of this document first, then filter by chunk_index
-        results = collection.get(
-            where={"doc_id": str(doc_id)}
-        )
-        
-        if not results or not results.get("documents"):
+        if not all_results:
             raise HTTPException(
                 status_code=404, 
                 detail=f"No chunks found for document ID {doc_id}"
             )
         
-        # Extract the data
-        documents = results.get("documents", [])
-        metadatas = results.get("metadatas", [])
-        ids = results.get("ids", [])
-        
-        # Find the specific chunk by chunk_index
+        # Find the specific chunk by chunk_index across all collections
         target_chunk = None
-        for doc_text, metadata, chunk_id in zip(documents, metadatas, ids):
-            if metadata.get("chunk_index") == chunk_index:
-                target_chunk = {
-                    "chunk_id": chunk_id,
-                    "content": doc_text,
-                    "metadata": metadata,
-                    "chunk_index": chunk_index,
-                    "doc_id": doc_id
-                }
+        for collection_name, results in all_results.items():
+            documents = results.get("documents", [])
+            metadatas = results.get("metadatas", [])
+            ids = results.get("ids", [])
+            
+            for doc_text, metadata, chunk_id in zip(documents, metadatas, ids):
+                if metadata.get("chunk_index") == chunk_index:
+                    target_chunk = {
+                        "chunk_id": chunk_id,
+                        "content": doc_text,
+                        "metadata": metadata,
+                        "chunk_index": chunk_index,
+                        "doc_id": doc_id,
+                        "collection": collection_name  # Track which model collection this came from
+                    }
+                    break
+            
+            if target_chunk:
                 break
         
         if target_chunk:

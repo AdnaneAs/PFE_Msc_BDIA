@@ -232,16 +232,21 @@ SYNTHESIZED ANSWER:"""
         
         try:
             logger.info(f"Processing sub-query: {sub_query[:100]}...")
-            
-            # Generate embedding for the sub-query
+              # Generate embedding for the sub-query using current model
             query_embedding = generate_embedding(sub_query)
             
-            # Query documents
+            # Get current embedding model info
+            from app.services.embedding_service import get_current_model_info
+            current_model = get_current_model_info()
+            model_name = current_model.get("name", "all-MiniLM-L6-v2")
+            
+            # Query documents using model-specific collection
             query_results = query_documents_advanced(
                 query_embedding=query_embedding,
                 query_text=sub_query,
                 n_results=max_sources,
-                search_strategy=search_strategy
+                search_strategy=search_strategy,
+                model_name=model_name
             )
             
             documents = query_results["documents"]

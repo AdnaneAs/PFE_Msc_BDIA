@@ -34,16 +34,23 @@ async def query(request: QueryRequest):
         if request.config_for_model:
             logger.info(f"Model configuration: {json.dumps(request.config_for_model)}")
         
-        # Generate embedding for the question
+        # Generate embedding for the question using current model
         metrics.mark_retrieval_start()
+        
+        # Get current embedding model info
+        from app.services.embedding_service import get_current_model_info
+        current_model = get_current_model_info()
+        model_name = current_model.get("name", "all-MiniLM-L6-v2")
+        
         query_embedding = generate_embedding(request.question)
         
-        # Use advanced query processing
+        # Use advanced query processing with model-specific collection
         query_results = query_documents_advanced(
             query_embedding=query_embedding,
             query_text=request.question,
             n_results=request.max_sources or 5,
-            search_strategy=request.search_strategy or "semantic"
+            search_strategy=request.search_strategy or "semantic",
+            model_name=model_name
         )
         
         documents = query_results["documents"]

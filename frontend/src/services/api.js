@@ -133,40 +133,45 @@ const fetchWithRetry = async (url, options = {}, retries = 1) => {
 };
 
 /**
- * Gets a list of available Ollama models with enhanced error handling
- * @returns {Promise<Array<string>>} List of available model names
+ * Get available LLM models
+ * @returns {Promise<Array>} List of available models grouped by provider
  */
-export const getOllamaModels = async () => {
+export const getAvailableLLMModels = async () => {
   try {
-    // Check server connection first
     const serverAvailable = await checkServerConnection();
     if (!serverAvailable) {
-      console.warn('Backend server not available, returning default models');
-      return ['llama3.2:latest'];
+      throw new Error('Backend server is not available. Please ensure it is running on http://localhost:8000');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/query/models`);
+    const data = await handleApiResponse(response);
+    
+    if (data && data.models) {
+      // Group models by provider for easier UI handling
+      const groupedModels = {
+        ollama: [],
+        openai: [],
+        gemini: [],
+        huggingface: []
+      };
+      
+      data.models.forEach(model => {
+        if (groupedModels[model.provider]) {
+          groupedModels[model.provider].push(model);
+        }
+      });
+      
+      return groupedModels;
     }
     
-    // Try querying the Ollama API directly first
-    const response = await fetchWithRetry('http://localhost:11434/api/tags', {}, 0); // No retries for Ollama
-    
-    if (response.ok) {
-      const data = await response.json();
-      if (data && data.models) {
-        // Extract model names from the response
-        const models = data.models.map(model => model.name);
-        console.log(`Found ${models.length} Ollama models`);
-        return models;
-      }
-    }
-    
-    // Fallback to a backend endpoint if direct access fails
-    console.log('Ollama direct access failed, trying backend endpoint');
-    const backupResponse = await fetchWithRetry(`${API_BASE_URL}/api/query/models`);
-    return await handleApiResponse(backupResponse);
-    
+    return {
+      ollama: [],
+      openai: [],
+      gemini: [],
+      huggingface: []
+    };
   } catch (error) {
-    console.error('Error fetching Ollama models:', error.message);
-    // Return a default model list in case of error
-    return ['llama3.2:latest'];
+    console.error('Error fetching available LLM models:', error);    throw error;
   }
 };
 
@@ -713,5 +718,253 @@ export const getDocumentChunk = async (docId, chunkIndex) => {
   } catch (error) {
     console.error(`Error fetching chunk ${chunkIndex} for document ${docId}:`, error);
     throw error;
+  }
+};
+
+/**
+ * Get complete system configuration
+ * @returns {Promise<Object>} Complete configuration object
+ */
+export const getSystemConfiguration = async () => {
+  if (!await checkServerConnection()) {
+    throw new Error('Backend server is not available');
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/`);
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error('Failed to get system configuration:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update embedding model
+ * @param {string} modelName - Name of the embedding model to use
+ * @returns {Promise<Object>} Update result
+ */
+export const updateEmbeddingModel = async (modelName) => {
+  if (!await checkServerConnection()) {
+    throw new Error('Backend server is not available');
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/embedding/model`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model_name: modelName }),
+    });
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error('Failed to update embedding model:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update LLM provider
+ * @param {string} provider - LLM provider name
+ * @returns {Promise<Object>} Update result
+ */
+export const updateLLMProvider = async (provider) => {
+  if (!await checkServerConnection()) {
+    throw new Error('Backend server is not available');
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/llm/provider`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ provider }),
+    });
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error('Failed to update LLM provider:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update LLM model
+ * @param {string} model - LLM model name
+ * @returns {Promise<Object>} Update result
+ */
+export const updateLLMModel = async (model) => {
+  if (!await checkServerConnection()) {
+    throw new Error('Backend server is not available');
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/llm/model`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model }),
+    });
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error('Failed to update LLM model:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update search strategy
+ * @param {string} strategy - Search strategy (hybrid, semantic, keyword)
+ * @returns {Promise<Object>} Update result
+ */
+export const updateSearchStrategy = async (strategy) => {
+  if (!await checkServerConnection()) {
+    throw new Error('Backend server is not available');
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/search/strategy`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ strategy }),
+    });
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error('Failed to update search strategy:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update max sources
+ * @param {number} maxSources - Maximum number of sources
+ * @returns {Promise<Object>} Update result
+ */
+export const updateMaxSources = async (maxSources) => {
+  if (!await checkServerConnection()) {
+    throw new Error('Backend server is not available');
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/search/max-sources`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ max_sources: maxSources }),
+    });
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error('Failed to update max sources:', error);
+    throw error;
+  }
+};
+
+/**
+ * Toggle query decomposition
+ * @param {boolean} enabled - Whether to enable query decomposition
+ * @returns {Promise<Object>} Update result
+ */
+export const toggleQueryDecomposition = async (enabled) => {
+  if (!await checkServerConnection()) {
+    throw new Error('Backend server is not available');
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/search/query-decomposition`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ enabled }),
+    });
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error('Failed to toggle query decomposition:', error);
+    throw error;
+  }
+};
+
+/**
+ * Store API key for a provider (temporary session storage)
+ * @param {string} provider - Provider name (openai, gemini, huggingface)
+ * @param {string} apiKey - The API key to store
+ * @returns {Promise<Object>} Storage result
+ */
+export const storeApiKey = async (provider, apiKey) => {
+  try {
+    // For now, use session storage until backend implements the endpoints
+    if (apiKey && apiKey.trim()) {
+      sessionStorage.setItem(`api_key_${provider}`, apiKey.trim());
+    } else {
+      sessionStorage.removeItem(`api_key_${provider}`);
+    }
+    
+    return { 
+      success: true, 
+      message: `API key ${apiKey ? 'stored' : 'cleared'} for ${provider}` 
+    };
+  } catch (error) {
+    console.error('Failed to store API key:', error);
+    throw new Error(`Failed to store API key for ${provider}: ${error.message}`);
+  }
+};
+
+/**
+ * Get stored API keys status (without revealing the actual keys)
+ * @returns {Promise<Object>} API keys status
+ */
+export const getApiKeysStatus = async () => {
+  try {
+    // For now, check session storage until backend implements the endpoints
+    const status = {
+      openai: !!sessionStorage.getItem('api_key_openai'),
+      gemini: !!sessionStorage.getItem('api_key_gemini'),
+      huggingface: !!sessionStorage.getItem('api_key_huggingface')
+    };
+    
+    return status;
+  } catch (error) {
+    console.error('Failed to get API keys status:', error);
+    // Return default status on error
+    return { openai: false, gemini: false, huggingface: false };
+  }
+};
+
+/**
+ * Clear API key for a provider
+ * @param {string} provider - Provider name (openai, gemini, huggingface)
+ * @returns {Promise<Object>} Clear result
+ */
+export const clearApiKey = async (provider) => {
+  try {
+    // For now, use session storage until backend implements the endpoints
+    sessionStorage.removeItem(`api_key_${provider}`);
+    
+    return { 
+      success: true, 
+      message: `API key cleared for ${provider}` 
+    };
+  } catch (error) {
+    console.error('Failed to clear API key:', error);
+    throw new Error(`Failed to clear API key for ${provider}: ${error.message}`);
+  }
+};
+
+/**
+ * Get stored API key for a provider (for sending with requests)
+ * @param {string} provider - Provider name (openai, gemini, huggingface)
+ * @returns {string|null} The API key or null if not found
+ */
+export const getApiKey = (provider) => {
+  try {
+    return sessionStorage.getItem(`api_key_${provider}`);
+  } catch (error) {
+    console.error('Failed to get API key:', error);
+    return null;
   }
 };

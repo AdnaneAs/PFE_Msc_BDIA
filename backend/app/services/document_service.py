@@ -189,6 +189,12 @@ SELECT COUNT(*) FROM {table_name};"""
         
         # Generate embeddings for all chunks at once
         embeddings = generate_embeddings(chunks)
+        
+        # Get current embedding model info
+        from app.services.embedding_service import get_current_model_info
+        current_model = get_current_model_info()
+        model_name = current_model.get("name", "all-MiniLM-L6-v2")
+        
         chunk_metadatas = []
         for i, chunk in enumerate(chunks):
             metadata = {
@@ -196,15 +202,16 @@ SELECT COUNT(*) FROM {table_name};"""
                 "filename": os.path.basename(file_path),
                 "file_type": file_type,
                 "chunk_index": i,
-                "total_chunks": len(chunks)
+                "total_chunks": len(chunks),
+                "embedding_model": model_name  # Track which model was used
             }
             chunk_metadatas.append(metadata)
             
-        logger.info(f"Generated {len(embeddings)} embeddings for document {doc_id}")
+        logger.info(f"Generated {len(embeddings)} embeddings for document {doc_id} using model '{model_name}'")
         logger.info(f"Storing chunks with metadata: {chunk_metadatas}")
         
-        # Store in vector database
-        add_documents(chunks, embeddings, chunk_metadatas)
+        # Store in model-specific vector database collection
+        add_documents(chunks, embeddings, chunk_metadatas, model_name=model_name)
         await update_document_status(
             doc_id, "completed", processed_at=datetime.now().isoformat(), chunk_count=len(chunks)
         )

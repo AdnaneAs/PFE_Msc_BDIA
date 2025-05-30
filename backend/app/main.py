@@ -7,7 +7,7 @@ import nest_asyncio
 # Apply nest_asyncio to allow nested event loops
 nest_asyncio.apply()
 
-from app.api.v1 import documents, query
+from app.api.v1 import documents, query, models, config
 from app.database.db_setup import init_db
 
 # Configure logging
@@ -53,6 +53,8 @@ async def health_check():
 # Include API routers with correct prefixes to match frontend expectations
 app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
 app.include_router(query.router, prefix="/api/query", tags=["query"])
+app.include_router(models.router, tags=["models"])
+app.include_router(config.router, tags=["configuration"])
 
 # Add models endpoint for frontend compatibility
 @app.get("/api/query/models") 
