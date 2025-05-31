@@ -1,0 +1,327 @@
+{
+  "retrieval_time": {
+    "without_reranking": {
+      "mean": 0.5529529047012329,
+      "std": 5.390172318284453,
+      "median": 0.013999223709106445
+    },
+    "with_reranking": {
+      "mean": 0.012874560356140137,
+      "std": 0.0022643006451540373,
+      "median": 0.012707114219665527
+    },
+    "improvement_percent": -97.67167144856643
+  },
+  "reranking_time": {
+    "without_reranking": {
+      "mean": 0.0,
+      "std": 0.0,
+      "median": 0.0
+    },
+    "with_reranking": {
+      "mean": 0.04592092990875244,
+      "std": 0.03942143410015199,
+      "median": 0.039249539375305176
+    },
+    "improvement_percent": 0
+  },
+  "total_time": {
+    "without_reranking": {
+      "mean": 0.5529529047012329,
+      "std": 5.390172318284453,
+      "median": 0.013999223709106445
+    },
+    "with_reranking": {
+      "mean": 0.05879549026489258,
+      "std": 0.039201672943307384,
+      "median": 0.05258524417877197
+    },
+    "improvement_percent": -89.36699856985823
+  },
+  "precision@1": {
+    "without_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "with_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "improvement_percent": 0.0
+  },
+  "recall@1": {
+    "without_reranking": {
+      "mean": 0.5,
+      "std": 0.0,
+      "median": 0.5
+    },
+    "with_reranking": {
+      "mean": 0.5,
+      "std": 0.0,
+      "median": 0.5
+    },
+    "improvement_percent": 0.0
+  },
+  "hit_rate@1": {
+    "without_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "with_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "improvement_percent": 0.0
+  },
+  "f1@1": {
+    "without_reranking": {
+      "mean": 0.6666666666666669,
+      "std": 2.2316322462394835e-16,
+      "median": 0.6666666666666666
+    },
+    "with_reranking": {
+      "mean": 0.6666666666666669,
+      "std": 2.2316322462394835e-16,
+      "median": 0.6666666666666666
+    },
+    "improvement_percent": 0.0
+  },
+  "precision@3": {
+    "without_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "with_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "improvement_percent": 0.0
+  },
+  "recall@3": {
+    "without_reranking": {
+      "mean": 0.5,
+      "std": 0.0,
+      "median": 0.5
+    },
+    "with_reranking": {
+      "mean": 0.5,
+      "std": 0.0,
+      "median": 0.5
+    },
+    "improvement_percent": 0.0
+  },
+  "hit_rate@3": {
+    "without_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "with_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "improvement_percent": 0.0
+  },
+  "f1@3": {
+    "without_reranking": {
+      "mean": 0.6666666666666669,
+      "std": 2.2316322462394835e-16,
+      "median": 0.6666666666666666
+    },
+    "with_reranking": {
+      "mean": 0.6666666666666669,
+      "std": 2.2316322462394835e-16,
+      "median": 0.6666666666666666
+    },
+    "improvement_percent": 0.0
+  },
+  "precision@5": {
+    "without_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "with_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "improvement_percent": 0.0
+  },
+  "recall@5": {
+    "without_reranking": {
+      "mean": 0.5,
+      "std": 0.0,
+      "median": 0.5
+    },
+    "with_reranking": {
+      "mean": 0.5,
+      "std": 0.0,
+      "median": 0.5
+    },
+    "improvement_percent": 0.0
+  },
+  "hit_rate@5": {
+    "without_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "with_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "improvement_percent": 0.0
+  },
+  "f1@5": {
+    "without_reranking": {
+      "mean": 0.6666666666666669,
+      "std": 2.2316322462394835e-16,
+      "median": 0.6666666666666666
+    },
+    "with_reranking": {
+      "mean": 0.6666666666666669,
+      "std": 2.2316322462394835e-16,
+      "median": 0.6666666666666666
+    },
+    "improvement_percent": 0.0
+  },
+  "precision@10": {
+    "without_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "with_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "improvement_percent": 0.0
+  },
+  "recall@10": {
+    "without_reranking": {
+      "mean": 0.5,
+      "std": 0.0,
+      "median": 0.5
+    },
+    "with_reranking": {
+      "mean": 0.5,
+      "std": 0.0,
+      "median": 0.5
+    },
+    "improvement_percent": 0.0
+  },
+  "hit_rate@10": {
+    "without_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "with_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "improvement_percent": 0.0
+  },
+  "f1@10": {
+    "without_reranking": {
+      "mean": 0.6666666666666669,
+      "std": 2.2316322462394835e-16,
+      "median": 0.6666666666666666
+    },
+    "with_reranking": {
+      "mean": 0.6666666666666669,
+      "std": 2.2316322462394835e-16,
+      "median": 0.6666666666666666
+    },
+    "improvement_percent": 0.0
+  },
+  "ndcg@1": {
+    "without_reranking": {
+      "mean": 0.0,
+      "std": 0.0,
+      "median": 0.0
+    },
+    "with_reranking": {
+      "mean": 0.0,
+      "std": 0.0,
+      "median": 0.0
+    },
+    "improvement_percent": 0
+  },
+  "ndcg@3": {
+    "without_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "with_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "improvement_percent": 0.0
+  },
+  "ndcg@5": {
+    "without_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "with_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "improvement_percent": 0.0
+  },
+  "ndcg@10": {
+    "without_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "with_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "improvement_percent": 0.0
+  },
+  "mrr": {
+    "without_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "with_reranking": {
+      "mean": 1.0,
+      "std": 0.0,
+      "median": 1.0
+    },
+    "improvement_percent": 0.0
+  },
+  "map": {
+    "without_reranking": {
+      "mean": 10.0,
+      "std": 0.0,
+      "median": 10.0
+    },
+    "with_reranking": {
+      "mean": 10.0,
+      "std": 0.0,
+      "median": 10.0
+    },
+    "improvement_percent": 0.0
+  }
+}

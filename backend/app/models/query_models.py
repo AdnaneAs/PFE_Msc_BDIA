@@ -19,6 +19,15 @@ class QueryRequest(BaseModel):
         True,
         description="Whether to use query decomposition for complex questions"
     )
+    # BGE Reranking parameters (enabled by default for +23.86% MAP improvement)
+    use_reranking: Optional[bool] = Field(
+        True,
+        description="Whether to use BGE reranking for better document relevance scoring (recommended for +23.86% MAP improvement)"
+    )
+    reranker_model: Optional[str] = Field(
+        "BAAI/bge-reranker-base",
+        description="BGE reranker model to use: 'BAAI/bge-reranker-base', 'BAAI/bge-reranker-large', or 'BAAI/bge-reranker-v2-m3'"
+    )
 
 class StreamingQueryRequest(BaseModel):
     question: str = Field(..., description="The question to ask")
@@ -38,6 +47,15 @@ class StreamingQueryRequest(BaseModel):
         True,
         description="Whether to use query decomposition for complex questions"
     )
+    # BGE Reranking parameters (enabled by default for +23.86% MAP improvement)
+    use_reranking: Optional[bool] = Field(
+        True,
+        description="Whether to use BGE reranking for better document relevance scoring (recommended for +23.86% MAP improvement)"
+    )
+    reranker_model: Optional[str] = Field(
+        "BAAI/bge-reranker-base",
+        description="BGE reranker model to use: 'BAAI/bge-reranker-base', 'BAAI/bge-reranker-large', or 'BAAI/bge-reranker-v2-m3'"
+    )
 
 class QueryResponse(BaseModel):
     answer: str = Field(..., description="The answer generated from the LLM")
@@ -48,6 +66,8 @@ class QueryResponse(BaseModel):
     num_sources: int = Field(..., description="Number of source documents used")
     model: Optional[str] = Field(None, description="Information about the model used")
     search_strategy: Optional[str] = Field(None, description="Search strategy used")
+    reranking_used: Optional[bool] = Field(None, description="Whether BGE reranking was applied")
+    reranker_model: Optional[str] = Field(None, description="BGE reranker model used, if any")
     average_relevance: Optional[float] = Field(None, description="Average relevance score of sources")
     top_relevance: Optional[float] = Field(None, description="Highest relevance score")
 

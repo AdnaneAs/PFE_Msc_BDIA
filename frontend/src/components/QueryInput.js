@@ -1,5 +1,5 @@
 import React, { useState, useEffect } from 'react';
-import { submitQuery, submitDecomposedQuery, getLLMStatus, getSystemConfiguration } from '../services/api';
+import { submitQuery, submitDecomposedQuery, getLLMStatus, getSystemConfiguration, getRerankerConfig } from '../services/api';
 
 const QueryInput = ({ onQueryResult }) => {
   const [question, setQuestion] = useState('');
@@ -16,6 +16,12 @@ const QueryInput = ({ onQueryResult }) => {
   // Query decomposition states - fetched from configuration
   const [useDecomposition, setUseDecomposition] = useState(false);
   const [decompositionResult, setDecompositionResult] = useState(null);
+  
+  // BGE Reranking states - new enhancement
+  const [useReranking, setUseReranking] = useState(true); // Default enabled based on benchmark
+  const [rerankerModel, setRerankerModel] = useState('BAAI/bge-reranker-base');
+  const [rerankerConfig, setRerankerConfig] = useState(null);
+  const [showRerankerDetails, setShowRerankerDetails] = useState(false);
   
   // Configuration state
   const [currentConfig, setCurrentConfig] = useState(null);
@@ -38,6 +44,26 @@ const QueryInput = ({ onQueryResult }) => {
       }
     };
     fetchConfiguration();
+  }, []);
+
+  // Fetch BGE reranker configuration
+  useEffect(() => {
+    const fetchRerankerConfig = async () => {
+      try {
+        const config = await getRerankerConfig();
+        setRerankerConfig(config);
+        
+        // Update reranking states with configuration
+        setUseReranking(config.reranking_enabled_by_default);
+        setRerankerModel(config.default_reranker_model);
+        
+        console.log("BGE reranker config loaded:", config);
+      } catch (err) {
+        console.error("Failed to fetch reranker configuration:", err);
+        // Keep default values if config fetch fails
+      }
+    };
+    fetchRerankerConfig();
   }, []);
 
   // Fetch LLM status initially and after queries
@@ -145,13 +171,15 @@ const QueryInput = ({ onQueryResult }) => {
       // Get current model configuration
       const modelConfig = getCurrentModelConfig();
       
-      // Send the query to the decomposed endpoint
+      // Send the query to the decomposed endpoint with BGE reranking
       const result = await submitDecomposedQuery(
         question, 
         modelConfig, 
         searchStrategy, 
         maxSources, 
-        useDecomposition
+        useDecomposition,
+        useReranking,
+        rerankerModel
       );
       
       console.log("Decomposed query complete. Result:", result);
@@ -217,8 +245,8 @@ const QueryInput = ({ onQueryResult }) => {
       // Get current model configuration
       const modelConfig = getCurrentModelConfig();
       
-      // Send the query to the backend
-      const result = await submitQuery(question, modelConfig, searchStrategy, maxSources);
+      // Send the query to the backend with BGE reranking
+      const result = await submitQuery(question, modelConfig, searchStrategy, maxSources, useReranking, rerankerModel);
       
       // Update status
       setQueryStatus({
@@ -279,7 +307,7 @@ const QueryInput = ({ onQueryResult }) => {
             <h3 className="text-sm font-medium text-gray-700">Current Configuration</h3>
             <div className="text-xs text-gray-500">Use the settings gear ⚙️ to modify</div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
             <div>
               <span className="text-gray-600">Model:</span>{' '}
               <span className="font-medium text-gray-800">
@@ -297,6 +325,15 @@ const QueryInput = ({ onQueryResult }) => {
               <span className={`font-medium ${useDecomposition ? 'text-blue-600' : 'text-gray-600'}`}>
                 {useDecomposition ? 'Enabled' : 'Disabled'}
               </span>
+            </div>
+            <div>
+              <span className="text-gray-600">BGE Reranking:</span>{' '}
+              <span className={`font-medium ${useReranking ? 'text-orange-600' : 'text-gray-500'}`}>
+                {useReranking ? '✓ Enabled' : '✗ Disabled'}
+              </span>
+              {useReranking && (
+                <div className="text-xs text-orange-500 mt-1">+23.86% MAP improvement</div>
+              )}
             </div>
           </div>
         </div>
@@ -386,8 +423,19 @@ const QueryInput = ({ onQueryResult }) => {
                 <path className="opacity-75" fill="currentColor" d="M4 12a8 8 0 018-8V0C5.373 0 0 5.373 0 12h4zm2 5.291A7.962 7.962 0 014 12H0c0 3.042 1.135 5.824 3 7.938l3-2.647z"></path>
               </svg>
             )}
-            <div>
-              <div>{queryStatus.message}</div>
+            <div className="flex-1">
+              <div className="flex items-center justify-between">
+                <span>{queryStatus.message}</span>
+                {/* BGE Reranking Status Indicator */}
+                {useReranking && (
+                  <div className="flex items-center ml-3">
+                    <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-medium">
+                      🎯 BGE Reranking
+                    </span>
+                    <span className="text-xs text-gray-500 ml-2">+23.86% MAP</span>
+                  </div>
+                )}
+              </div>
               {queryStatus.retrievalTime && (
                 <div className="text-xs mt-1">Retrieved documents in {queryStatus.retrievalTime}ms</div>
               )}
@@ -400,7 +448,12 @@ const QueryInput = ({ onQueryResult }) => {
               {queryStatus.queryTime && (
                 <div className="text-xs mt-1">Total query time: {queryStatus.queryTime}ms</div>
               )}
-              {/* Streaming response message removed */}
+              {/* BGE Reranker Model Display */}
+              {useReranking && queryStatus.state === 'success' && (
+                <div className="text-xs mt-1 text-orange-600">
+                  🔄 Reranked with: {rerankerModel}
+                </div>
+              )}
             </div>
           </div>
         </div>

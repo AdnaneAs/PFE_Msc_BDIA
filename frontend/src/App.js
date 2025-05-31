@@ -34,6 +34,14 @@ function App() {
   // Handle query results including streaming updates
   const handleQueryResult = (result) => {
     console.log("App received query result:", result);
+    console.log("Result keys:", result ? Object.keys(result) : 'null');
+    console.log("Timing fields in result:", {
+      query_time_ms: result?.query_time_ms,
+      retrieval_time_ms: result?.retrieval_time_ms,
+      llm_time_ms: result?.llm_time_ms,
+      reranking_used: result?.reranking_used,
+      reranker_model: result?.reranker_model
+    });
     if (result) {
       // Make sure we're updating the state with the new result
       setQueryResult({...result});

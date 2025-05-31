@@ -10,22 +10,29 @@ import {
   getAvailableLLMModels,
   storeApiKey,
   getApiKeysStatus,
-  clearApiKey
+  clearApiKey,
+  getRerankerConfig,
+  toggleReranking
 } from '../services/api';
 import ModelSelectionSection from './config/ModelSelectionSection';
 import SearchConfigurationSection from './config/SearchConfigurationSection';
+import BGERerankerSection from './config/BGERerankerSection';
 
 const ConfigurationPanel = ({ isOpen, onClose }) => {
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
-  const [apiKeys, setApiKeys] = useState({
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);  const [apiKeys, setApiKeys] = useState({
     openai: '',
     gemini: '',
     huggingface: ''
-  });  useEffect(() => {
+  });
+  
+  // BGE Reranking states
+  const [rerankerConfig, setRerankerConfig] = useState(null);
+  const [useReranking, setUseReranking] = useState(true);
+  const [rerankerModel, setRerankerModel] = useState('BAAI/bge-reranker-base');useEffect(() => {
     if (isOpen) {
       loadConfiguration();
     } else {
@@ -42,12 +49,12 @@ const ConfigurationPanel = ({ isOpen, onClose }) => {
         setLoading(true);
       }
       
-      setError(null); // Clear any previous errors
-        // Load configuration, available models, and API keys status
-      const [configData, availableModels, apiKeysStatus] = await Promise.all([
+      setError(null); // Clear any previous errors        // Load configuration, available models, API keys status, and reranker config
+      const [configData, availableModels, apiKeysStatus, rerankerConfigData] = await Promise.all([
         getSystemConfiguration(),
         getAvailableLLMModels(),
-        getApiKeysStatus()
+        getApiKeysStatus(),
+        getRerankerConfig()
       ]);
       
       // Merge available Ollama models into the configuration
@@ -57,6 +64,11 @@ const ConfigurationPanel = ({ isOpen, onClose }) => {
       }
       
       setConfig(configData);
+      setRerankerConfig(rerankerConfigData);
+      
+      // Set reranking states from configuration
+      setUseReranking(rerankerConfigData.reranking_enabled_by_default);
+      setRerankerModel(rerankerConfigData.default_reranker_model);
       
       // Update API keys state based on what's stored on backend (but don't expose actual keys)
       setApiKeys(prev => ({
@@ -160,6 +172,22 @@ const ConfigurationPanel = ({ isOpen, onClose }) => {
     }
   };
 
+  // BGE Reranking handlers
+  const handleRerankingToggle = (enabled) => {
+    setUseReranking(enabled);
+    handleConfigUpdate(
+      () => toggleReranking(enabled),
+      `BGE reranking ${enabled ? 'enabled' : 'disabled'}`
+    );
+  };
+
+  const handleRerankerModelChange = (model) => {
+    setRerankerModel(model);
+    console.log(`BGE reranker model changed to ${model}`);
+    // Note: This is a frontend-only setting for now
+    // In a production system, you might want to persist this to backend configuration
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -225,6 +253,14 @@ const ConfigurationPanel = ({ isOpen, onClose }) => {
                 onSearchStrategyChange={handleSearchStrategyChange}
                 onMaxSourcesChange={handleMaxSourcesChange}
                 onQueryDecompositionToggle={handleQueryDecompositionToggle}
+                disabled={saving}
+              />              {/* BGE Reranker Section */}
+              <BGERerankerSection
+                rerankerConfig={rerankerConfig}
+                useReranking={useReranking}
+                rerankerModel={rerankerModel}
+                onRerankingToggle={handleRerankingToggle}
+                onRerankerModelChange={handleRerankerModelChange}
                 disabled={saving}
               />
             </div>

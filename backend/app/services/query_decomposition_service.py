@@ -210,12 +210,12 @@ SYNTHESIZED ANSWER:"""
             return result
             
         except Exception as e:
-            logger.error(f"Error in query decomposition: {e}")
-            # Fallback to treating as simple query
+            logger.error(f"Error in query decomposition: {e}")            # Fallback to treating as simple query
             return False, [query]
     
     async def process_sub_query(self, sub_query: str, model_config: Dict[str, Any] = None, 
-                              max_sources: int = 5, search_strategy: str = "semantic") -> Dict[str, Any]:
+                                max_sources: int = 5, search_strategy: str = "semantic",
+                                use_reranking: bool = False, reranker_model: str = "BAAI/bge-reranker-base") -> Dict[str, Any]:
         """
         Process a single sub-query through the RAG pipeline
         
@@ -224,6 +224,8 @@ SYNTHESIZED ANSWER:"""
             model_config: LLM configuration
             max_sources: Maximum number of sources to retrieve
             search_strategy: Search strategy to use
+            use_reranking: Whether to use BGE reranking
+            reranker_model: BGE reranker model to use
             
         Returns:
             dict: Sub-query results including answer, sources, and metrics
@@ -239,14 +241,15 @@ SYNTHESIZED ANSWER:"""
             from app.services.embedding_service import get_current_model_info
             current_model = get_current_model_info()
             model_name = current_model.get("name", "all-MiniLM-L6-v2")
-            
-            # Query documents using model-specific collection
+              # Query documents using model-specific collection with optional reranking
             query_results = query_documents_advanced(
                 query_embedding=query_embedding,
                 query_text=sub_query,
                 n_results=max_sources,
                 search_strategy=search_strategy,
-                model_name=model_name
+                model_name=model_name,
+                use_reranking=use_reranking,
+                reranker_model=reranker_model
             )
             
             documents = query_results["documents"]

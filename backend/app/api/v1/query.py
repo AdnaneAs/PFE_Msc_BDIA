@@ -44,23 +44,35 @@ async def query(request: QueryRequest):
         
         query_embedding = generate_embedding(request.question)
         
-        # Use advanced query processing with model-specific collection
+        # Use advanced query processing with model-specific collection and enhanced reranking
+        # Import configuration for reranking defaults
+        from app.config import ENABLE_RERANKING_BY_DEFAULT, DEFAULT_RERANKER_MODEL
+        
+        # Apply configuration defaults if not specified
+        use_reranking = request.use_reranking if request.use_reranking is not None else ENABLE_RERANKING_BY_DEFAULT
+        reranker_model = request.reranker_model or DEFAULT_RERANKER_MODEL
+        
         query_results = query_documents_advanced(
             query_embedding=query_embedding,
             query_text=request.question,
             n_results=request.max_sources or 5,
             search_strategy=request.search_strategy or "semantic",
-            model_name=model_name
+            model_name=model_name,
+            use_reranking=use_reranking,
+            reranker_model=reranker_model
         )
         
         documents = query_results["documents"]
         metadatas = query_results["metadatas"]
         relevance_scores = query_results.get("relevance_scores", [])
         search_strategy = query_results.get("search_strategy", "semantic")
+        reranking_used = query_results.get("reranking_used", False)
+        reranker_model_used = query_results.get("reranker_model", None)
         
         # Mark the end of retrieval and log metrics
         metrics.mark_retrieval_end(len(documents))
-        logger.info(f"Document retrieval completed using '{search_strategy}', found {len(documents)} relevant documents")
+        reranking_info = f" with BGE reranking ({reranker_model_used})" if reranking_used else ""
+        logger.info(f"Document retrieval completed using '{search_strategy}'{reranking_info}, found {len(documents)} relevant documents")
         
         # Log relevance metrics
         if relevance_scores:
@@ -101,6 +113,8 @@ async def query(request: QueryRequest):
             num_sources=len(documents),
             model=model_info,
             search_strategy=search_strategy,
+            reranking_used=reranking_used,
+            reranker_model=reranker_model_used,
             # Calculate average and top relevance (scores are now 0-100)
             average_relevance=round(sum(relevance_scores) / len(relevance_scores), 1) if relevance_scores else None,
             top_relevance=round(max(relevance_scores), 1) if relevance_scores else None
@@ -226,14 +240,23 @@ async def query_with_decomposition(request: QueryRequest):
             sub_queries = [request.question]
             logger.info("Query decomposition disabled, treating as simple query")
         
-        # Step 2: Process each sub-query
+        # Step 2: Process each sub-query with enhanced reranking configuration
+        # Import configuration for reranking defaults
+        from app.config import ENABLE_RERANKING_BY_DEFAULT, DEFAULT_RERANKER_MODEL
+        
+        # Apply configuration defaults if not specified
+        use_reranking = request.use_reranking if request.use_reranking is not None else ENABLE_RERANKING_BY_DEFAULT
+        reranker_model = request.reranker_model or DEFAULT_RERANKER_MODEL
+        
         sub_results = []
         for sub_query in sub_queries:
             sub_result = await query_decomposer.process_sub_query(
                 sub_query=sub_query,
                 model_config=request.config_for_model,
                 max_sources=request.max_sources or 5,
-                search_strategy=request.search_strategy or "semantic"
+                search_strategy=request.search_strategy or "semantic",
+                use_reranking=use_reranking,
+                reranker_model=reranker_model
             )
             
             # Convert to SubQueryResult model
@@ -357,3 +380,217 @@ async def query_with_decomposition(request: QueryRequest):
                 status_code=500, 
                 detail=f"Query processing failed: {str(e)}. Fallback also failed: {str(fallback_error)}"
             )
+
+
+@router.get(
+    "/reranker/models",
+    summary="Get available BGE reranker models"
+)
+async def get_available_reranker_models():
+    """
+    Get the list of available BGE reranker models and their status
+    """
+    try:
+        # Import here to avoid circular imports
+        from app.services.rerank_service import BGEReranker
+        
+        # List of supported BGE reranker models
+        models = [
+            {
+                "model_id": "BAAI/bge-reranker-base",
+                "name": "BGE Reranker Base",
+                "description": "Fast and efficient reranker for general use",
+                "size": "Small (~280MB)"
+            },
+            {
+                "model_id": "BAAI/bge-reranker-large", 
+                "name": "BGE Reranker Large",
+                "description": "Higher accuracy reranker with larger model size",
+                "size": "Large (~1.3GB)"
+            },
+            {
+                "model_id": "BAAI/bge-reranker-v2-m3",
+                "name": "BGE Reranker v2 M3",
+                "description": "Latest multilingual reranker with improved performance",
+                "size": "Medium (~560MB)"
+            }
+        ]
+        
+        # Check if reranking service is available
+        try:
+            reranker = BGEReranker()
+            service_available = True
+        except Exception as e:
+            logger.warning(f"BGE reranker service not available: {e}")
+            service_available = False
+        
+        return {
+            "available_models": models,
+            "service_available": service_available,
+            "default_model": "BAAI/bge-reranker-base"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting reranker models: {e}")
+        raise HTTPException(status_code=500, detail=f"Error getting reranker models: {str(e)}")
+
+
+@router.post(
+    "/reranker/test",
+    summary="Test BGE reranking with a sample query"
+)
+async def test_reranking(request: QueryRequest):
+    """
+    Test BGE reranking functionality with a sample query to compare results
+    """
+    try:
+        # Validate reranking parameters
+        if not request.use_reranking:
+            raise HTTPException(status_code=400, detail="use_reranking must be set to true for testing")
+        
+        logger.info(f"Testing BGE reranking for query: '{request.question}'")
+        
+        # Get current embedding model info
+        from app.services.embedding_service import get_current_model_info
+        current_model = get_current_model_info()
+        model_name = current_model.get("name", "all-MiniLM-L6-v2")
+        
+        # Generate embedding for the question
+        query_embedding = generate_embedding(request.question)
+        
+        # Get results WITHOUT reranking for comparison
+        original_results = query_documents_advanced(
+            query_embedding=query_embedding,
+            query_text=request.question,
+            n_results=request.max_sources or 5,
+            search_strategy=request.search_strategy or "semantic",
+            model_name=model_name,
+            use_reranking=False
+        )
+        
+        # Get results WITH reranking
+        reranked_results = query_documents_advanced(
+            query_embedding=query_embedding,
+            query_text=request.question,
+            n_results=request.max_sources or 5,
+            search_strategy=request.search_strategy or "semantic", 
+            model_name=model_name,
+            use_reranking=True,
+            reranker_model=request.reranker_model or "BAAI/bge-reranker-base"
+        )
+        
+        # Compare results
+        comparison = {
+            "query": request.question,
+            "reranker_model": request.reranker_model or "BAAI/bge-reranker-base",
+            "original_results": {
+                "num_documents": len(original_results["documents"]),
+                "search_strategy": original_results.get("search_strategy"),
+                "relevance_scores": original_results.get("relevance_scores", []),
+                "avg_relevance": round(sum(original_results.get("relevance_scores", [])) / max(len(original_results.get("relevance_scores", [])), 1), 3),
+                "documents": [
+                    {
+                        "content": doc[:200] + "..." if len(doc) > 200 else doc,
+                        "metadata": meta,
+                        "relevance_score": score
+                    }
+                    for doc, meta, score in zip(
+                        original_results["documents"],
+                        original_results["metadatas"],
+                        original_results.get("relevance_scores", [])
+                    )
+                ]
+            },
+            "reranked_results": {
+                "num_documents": len(reranked_results["documents"]),
+                "search_strategy": reranked_results.get("search_strategy"),
+                "relevance_scores": reranked_results.get("relevance_scores", []),
+                "avg_relevance": round(sum(reranked_results.get("relevance_scores", [])) / max(len(reranked_results.get("relevance_scores", [])), 1), 3),
+                "reranking_applied": reranked_results.get("reranking_used", False),
+                "documents": [
+                    {
+                        "content": doc[:200] + "..." if len(doc) > 200 else doc,
+                        "metadata": meta,
+                        "relevance_score": score
+                    }
+                    for doc, meta, score in zip(
+                        reranked_results["documents"],
+                        reranked_results["metadatas"],
+                        reranked_results.get("relevance_scores", [])
+                    )
+                ]
+            }
+        }
+        
+        logger.info(f"Reranking test completed. Original avg: {comparison['original_results']['avg_relevance']}, Reranked avg: {comparison['reranked_results']['avg_relevance']}")
+        
+        return comparison
+        
+    except Exception as e:
+        logger.error(f"Error testing reranking: {e}")
+        raise HTTPException(status_code=500, detail=f"Error testing reranking: {str(e)}")
+
+
+@router.get(
+    "/reranker/config",
+    summary="Get BGE reranker configuration and available models"
+)
+async def get_reranker_config():
+    """
+    Get BGE reranker configuration including available models and benchmark results
+    """
+    try:
+        from app.config import (
+            ENABLE_RERANKING_BY_DEFAULT, 
+            DEFAULT_RERANKER_MODEL, 
+            AVAILABLE_RERANKER_MODELS,
+            RERANKING_INITIAL_RETRIEVAL_MULTIPLIER,
+            RERANKING_MAX_INITIAL_DOCUMENTS
+        )
+        
+        return {
+            "reranking_enabled_by_default": ENABLE_RERANKING_BY_DEFAULT,
+            "default_reranker_model": DEFAULT_RERANKER_MODEL,
+            "available_models": AVAILABLE_RERANKER_MODELS,
+            "performance_settings": {
+                "initial_retrieval_multiplier": RERANKING_INITIAL_RETRIEVAL_MULTIPLIER,
+                "max_initial_documents": RERANKING_MAX_INITIAL_DOCUMENTS
+            },
+            "benchmark_summary": {
+                "base_model_improvements": {
+                    "map_improvement_percent": 23.86,
+                    "precision_at_5_improvement_percent": 23.08,
+                    "ndcg_at_5_improvement_percent": 7.09
+                },
+                "recommended_model": "BAAI/bge-reranker-base",
+                "test_dataset": "HotpotQA academic benchmark (100 samples)"
+            }
+        }
+    except Exception as e:
+        logger.error(f"Error getting reranker configuration: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error getting reranker configuration: {str(e)}")
+
+
+@router.post(
+    "/reranker/toggle",
+    summary="Toggle BGE reranking on/off for system"
+)
+async def toggle_reranking(enable: bool):
+    """
+    Temporarily toggle BGE reranking on/off (runtime setting, not persistent)
+    """
+    try:
+        # This would be a runtime toggle - in a production system, 
+        # you might want to store this in a database or configuration service
+        import app.config as config
+        config.ENABLE_RERANKING_BY_DEFAULT = enable
+        
+        return {
+            "success": True,
+            "reranking_enabled": enable,
+            "message": f"BGE reranking {'enabled' if enable else 'disabled'} successfully",
+            "note": "This is a runtime setting and will reset on server restart"
+        }
+    except Exception as e:
+        logger.error(f"Error toggling reranking: {str(e)}", exc_info=True)
+        raise HTTPException(status_code=500, detail=f"Error toggling reranking: {str(e)}")

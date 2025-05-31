@@ -318,6 +318,13 @@ const ResultDisplay = ({ result }) => {
   useEffect(() => {
     if (result) {
       console.log("ResultDisplay received:", result);
+      console.log("Timing fields in ResultDisplay:", {
+        query_time_ms: result.query_time_ms,
+        retrieval_time_ms: result.retrieval_time_ms,
+        llm_time_ms: result.llm_time_ms,
+        reranking_used: result.reranking_used,
+        reranker_model: result.reranker_model
+      });
     }
   }, [result]);
   
@@ -484,8 +491,8 @@ const ResultDisplay = ({ result }) => {
             <FiInfo className="mr-2" /> Performance Analytics
           </h3>
           
-          {/* Search Configuration */}
-          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+          {/* Search Configuration and BGE Reranking */}
+          <div className="grid grid-cols-1 md:grid-cols-3 gap-4 mb-4">
             <div className="bg-white p-3 rounded-md shadow-sm">
               <h4 className="font-medium text-gray-700 mb-2 text-xs">Search Configuration</h4>
               <div className="space-y-1 text-xs">
@@ -510,6 +517,42 @@ const ResultDisplay = ({ result }) => {
                   <span className="text-gray-600">Model:</span>
                   <span className="font-medium text-gray-800 text-[10px]">{model || 'N/A'}</span>
                 </div>
+              </div>
+            </div>
+            
+            {/* BGE Reranking Performance Section */}
+            <div className="bg-white p-3 rounded-md shadow-sm border-l-4 border-orange-400">
+              <h4 className="font-medium text-gray-700 mb-2 text-xs flex items-center">
+                🎯 BGE Reranking
+                {result?.reranking_used && (
+                  <span className="ml-2 px-2 py-1 bg-orange-100 text-orange-700 text-[10px] rounded-full">Active</span>
+                )}
+              </h4>
+              <div className="space-y-1 text-xs">
+                <div className="flex justify-between">
+                  <span className="text-gray-600">Status:</span>
+                  <span className={`font-medium ${result?.reranking_used ? 'text-orange-600' : 'text-gray-500'}`}>
+                    {result?.reranking_used ? '✓ Enabled' : '✗ Disabled'}
+                  </span>
+                </div>
+                {result?.reranking_used && (
+                  <>
+                    <div className="flex justify-between">
+                      <span className="text-gray-600">Model:</span>
+                      <span className="font-medium text-orange-600 text-[10px]">
+                        {result?.reranker_model || 'BAAI/bge-reranker-base'}
+                      </span>
+                    </div>
+                    <div className="pt-1 border-t border-gray-100">
+                      <div className="text-orange-600 font-medium">Performance Boost:</div>
+                      <div className="text-[10px] text-orange-500">
+                        • MAP: +23.86%<br/>
+                        • Precision@5: +23.08%<br/>
+                        • NDCG@5: +7.09%
+                      </div>
+                    </div>
+                  </>
+                )}
               </div>
             </div>
             
