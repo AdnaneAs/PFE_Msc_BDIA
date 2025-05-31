@@ -1,0 +1,138 @@
+{
+  "no_reranker": {
+    "config_name": "no_reranker",
+    "config": {
+      "name": "No Reranker",
+      "model": null,
+      "description": "Baseline vector similarity search only",
+      "color": "#95a5a6"
+    },
+    "metrics": {
+      "precision@1": 0.0,
+      "recall@1": 0.0,
+      "hit_rate@1": 0.0,
+      "ndcg@1": 0.7,
+      "precision@3": 0.0,
+      "recall@3": 0.0,
+      "hit_rate@3": 0.0,
+      "ndcg@3": 0.8088781282377517,
+      "precision@5": 0.0,
+      "recall@5": 0.0,
+      "hit_rate@5": 0.0,
+      "ndcg@5": 0.8071721871184586,
+      "precision@10": 0.0,
+      "recall@10": 0.0,
+      "hit_rate@10": 0.0,
+      "ndcg@10": 0.8048523342069851,
+      "map": 0.0,
+      "mrr": 0.0,
+      "avg_retrieval_time": 0.03269038200378418,
+      "avg_reranking_time": 0.0,
+      "total_processing_time": 0.03269038200378418
+    },
+    "num_queries": 10,
+    "num_valid_results": 10
+  },
+  "bge_base": {
+    "config_name": "bge_base",
+    "config": {
+      "name": "BGE Reranker Base",
+      "model": "BAAI/bge-reranker-base",
+      "description": "Balanced performance and quality",
+      "color": "#3498db"
+    },
+    "metrics": {
+      "precision@1": 0.0,
+      "recall@1": 0.0,
+      "hit_rate@1": 0.0,
+      "ndcg@1": 0.5,
+      "precision@3": 0.0,
+      "recall@3": 0.0,
+      "hit_rate@3": 0.0,
+      "ndcg@3": 0.7593562270371802,
+      "precision@5": 0.0,
+      "recall@5": 0.0,
+      "hit_rate@5": 0.0,
+      "ndcg@5": 0.8405374235716586,
+      "precision@10": 0.0,
+      "recall@10": 0.0,
+      "hit_rate@10": 0.0,
+      "ndcg@10": 0.8141579198503847,
+      "map": 0.0,
+      "mrr": 0.0,
+      "avg_retrieval_time": 0.00951845645904541,
+      "avg_reranking_time": 0.31977014541625975,
+      "total_processing_time": 0.3292886018753052
+    },
+    "num_queries": 10,
+    "num_valid_results": 10
+  },
+  "bge_large": {
+    "config_name": "bge_large",
+    "config": {
+      "name": "BGE Reranker Large",
+      "model": "BAAI/bge-reranker-large",
+      "description": "Higher quality, more parameters",
+      "color": "#e74c3c"
+    },
+    "metrics": {
+      "precision@1": 0.0,
+      "recall@1": 0.0,
+      "hit_rate@1": 0.0,
+      "ndcg@1": 0.6,
+      "precision@3": 0.0,
+      "recall@3": 0.0,
+      "hit_rate@3": 0.0,
+      "ndcg@3": 0.7446634184725907,
+      "precision@5": 0.0,
+      "recall@5": 0.0,
+      "hit_rate@5": 0.0,
+      "ndcg@5": 0.7448389700956187,
+      "precision@10": 0.0,
+      "recall@10": 0.0,
+      "hit_rate@10": 0.0,
+      "ndcg@10": 0.7484194187950213,
+      "map": 0.0,
+      "mrr": 0.0,
+      "avg_retrieval_time": 0.010548639297485351,
+      "avg_reranking_time": 1.0244431734085082,
+      "total_processing_time": 1.0349918127059936
+    },
+    "num_queries": 10,
+    "num_valid_results": 10
+  },
+  "bge_v2_m3": {
+    "config_name": "bge_v2_m3",
+    "config": {
+      "name": "BGE Reranker v2-M3",
+      "model": "BAAI/bge-reranker-v2-m3",
+      "description": "Latest multilingual model",
+      "color": "#f39c12"
+    },
+    "metrics": {
+      "precision@1": 0.0,
+      "recall@1": 0.0,
+      "hit_rate@1": 0.0,
+      "ndcg@1": 0.7,
+      "precision@3": 0.0,
+      "recall@3": 0.0,
+      "hit_rate@3": 0.0,
+      "ndcg@3": 0.7538059378607863,
+      "precision@5": 0.0,
+      "recall@5": 0.0,
+      "hit_rate@5": 0.0,
+      "ndcg@5": 0.7396258328566194,
+      "precision@10": 0.0,
+      "recall@10": 0.0,
+      "hit_rate@10": 0.0,
+      "ndcg@10": 0.8099369797011094,
+      "map": 0.0,
+      "mrr": 0.0,
+      "avg_retrieval_time": 0.011892390251159669,
+      "avg_reranking_time": 53.77959837913513,
+      "total_processing_time": 53.79149076938629
+    },
+    "num_queries": 10,
+    "num_valid_results": 10
+  }
+}
