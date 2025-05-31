@@ -60,13 +60,12 @@ async def get_system_configuration() -> Dict[str, Any]:
                 "description": "OpenAI GPT models (API key required)",
                 "status": "unavailable",  # TODO: Check API key
                 "models": ["gpt-4", "gpt-3.5-turbo"]
-            },
-            "gemini": {
+            },            "gemini": {
                 "name": "gemini", 
                 "display_name": "Google Gemini",
                 "description": "Google Gemini models (API key required)",
                 "status": "unavailable",  # TODO: Check API key
-                "models": ["gemini-pro", "gemini-pro-vision"]
+                "models": ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
             },
             "huggingface": {
                 "name": "huggingface",
@@ -383,3 +382,190 @@ async def update_llm_model(request: Dict[str, str]) -> Dict[str, Any]:
             status_code=500,
             detail=f"Failed to update LLM model: {str(e)}"
         )
+
+@router.post(
+    "/api-keys/{provider}",
+    summary="Store API key for a provider",
+    response_description="Result of API key storage"
+)
+async def store_api_key(provider: str, request: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Store API key for a specific provider (openai, gemini, huggingface)
+    
+    Args:
+        provider: Provider name
+        request: Dict containing 'api_key' key
+        
+    Returns:
+        Dict containing storage result
+    """
+    try:
+        valid_providers = ["openai", "gemini", "huggingface"]
+        
+        if provider not in valid_providers:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid provider. Must be one of: {valid_providers}"
+            )
+        
+        api_key = request.get("api_key")
+        if not api_key:
+            raise HTTPException(status_code=400, detail="api_key field is required")
+        
+        # Store API key in settings
+        setting_key = f"api_key_{provider}"
+        update_setting(setting_key, api_key.strip())
+        
+        return {
+            "status": "success",
+            "message": f"API key stored for {provider}",
+            "provider": provider
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error storing API key for {provider}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to store API key for {provider}: {str(e)}"
+        )
+
+@router.get(
+    "/api-keys/status",
+    summary="Get API keys status",
+    response_description="Status of stored API keys"
+)
+async def get_api_keys_status() -> Dict[str, Any]:
+    """
+    Get status of stored API keys (without revealing the actual keys)
+    
+    Returns:
+        Dict containing API keys status
+    """
+    try:
+        settings = load_settings()
+        
+        status = {
+            "openai": bool(settings.get("api_key_openai")),
+            "gemini": bool(settings.get("api_key_gemini")),
+            "huggingface": bool(settings.get("api_key_huggingface"))
+        }
+        
+        return {
+            "status": "success",
+            "api_keys": status
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting API keys status: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get API keys status: {str(e)}"
+        )
+
+@router.delete(
+    "/api-keys/{provider}",
+    summary="Clear API key for a provider",
+    response_description="Result of API key clearing"
+)
+async def clear_api_key(provider: str) -> Dict[str, Any]:
+    """
+    Clear API key for a specific provider
+    
+    Args:
+        provider: Provider name
+        
+    Returns:
+        Dict containing clear result
+    """
+    try:
+        valid_providers = ["openai", "gemini", "huggingface"]
+        
+        if provider not in valid_providers:
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid provider. Must be one of: {valid_providers}"
+            )
+        
+        # Clear API key from settings
+        setting_key = f"api_key_{provider}"
+        update_setting(setting_key, None)
+        
+        return {
+            "status": "success",
+            "message": f"API key cleared for {provider}",
+            "provider": provider
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error clearing API key for {provider}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear API key for {provider}: {str(e)}"
+        )
+
+@router.post(
+    "/reranking/toggle",
+    summary="Toggle BGE reranking with persistent storage",
+    response_description="Result of reranking toggle"
+)
+async def toggle_reranking_persistent(request: Dict[str, bool]) -> Dict[str, Any]:
+    """
+    Toggle BGE reranking on/off with persistent storage
+    
+    Args:
+        request: Dict containing 'enabled' key
+        
+    Returns:
+        Dict containing toggle result
+    """
+    try:
+        enabled = request.get("enabled")
+        
+        if enabled is None:
+            raise HTTPException(status_code=400, detail="enabled field is required")
+        
+        # Save to persistent settings
+        update_setting("reranking_enabled", enabled)
+        
+        # Also update runtime config for immediate effect
+        import app.config as config
+        config.ENABLE_RERANKING_BY_DEFAULT = enabled
+        
+        return {
+            "status": "success",
+            "message": f"BGE reranking {'enabled' if enabled else 'disabled'}",
+            "enabled": enabled,
+            "persistent": True
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error toggling reranking: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to toggle reranking: {str(e)}"
+        )
+
+@router.get(
+    "/reranking/status",
+    summary="Get current reranking status"
+)
+async def get_reranking_status():
+    """Get current reranking configuration status"""
+    try:
+        settings = load_settings()
+        from app.config import ENABLE_RERANKING_BY_DEFAULT, DEFAULT_RERANKER_MODEL
+        
+        return {
+            "reranking_enabled": settings.get("reranking_enabled", ENABLE_RERANKING_BY_DEFAULT),
+            "default_model": DEFAULT_RERANKER_MODEL,
+            "persistent": "reranking_enabled" in settings
+        }
+    except Exception as e:
+        logger.error(f"Error getting reranking status: {e}")
+        raise HTTPException(status_code=500, detail=str(e))

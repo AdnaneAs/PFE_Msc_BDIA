@@ -47,9 +47,17 @@ async def query(request: QueryRequest):
         # Use advanced query processing with model-specific collection and enhanced reranking
         # Import configuration for reranking defaults
         from app.config import ENABLE_RERANKING_BY_DEFAULT, DEFAULT_RERANKER_MODEL
+        from app.services.settings_service import load_settings
         
-        # Apply configuration defaults if not specified
-        use_reranking = request.use_reranking if request.use_reranking is not None else ENABLE_RERANKING_BY_DEFAULT
+        # Load user settings to check for persistent reranking preference
+        user_settings = load_settings()
+        
+        # Apply configuration defaults if not specified, with user settings taking priority
+        use_reranking = request.use_reranking
+        if use_reranking is None:
+            # Check user settings first, then fall back to config default
+            use_reranking = user_settings.get("reranking_enabled", ENABLE_RERANKING_BY_DEFAULT)
+        
         reranker_model = request.reranker_model or DEFAULT_RERANKER_MODEL
         
         query_results = query_documents_advanced(
@@ -84,7 +92,7 @@ async def query(request: QueryRequest):
             logger.warning(f"No relevant documents found for query: '{request.question}'")
             metrics.complete()
             return QueryResponse(
-                answer="I couldn't find any relevant information to answer your question. Please try a different question or upload more documents.",
+                answer="I don't have any relevant information in my knowledge base to answer your question. Please try rephrasing your question or upload documents that might contain the information you're looking for.",
                 sources=[],
                 query_time_ms=metrics.complete()["total_time_ms"],
                 num_sources=0

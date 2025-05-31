@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { submitQuery, submitDecomposedQuery, getLLMStatus, getSystemConfiguration, getRerankerConfig } from '../services/api';
 
-const QueryInput = ({ onQueryResult }) => {
+const QueryInput = ({ onQueryResult, configChangeCounter }) => {
   const [question, setQuestion] = useState('');
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState(null);
@@ -25,26 +25,50 @@ const QueryInput = ({ onQueryResult }) => {
   
   // Configuration state
   const [currentConfig, setCurrentConfig] = useState(null);
+  const [configVersion, setConfigVersion] = useState(0); // Add version to force refresh
   
-  // Fetch current configuration
-  useEffect(() => {
-    const fetchConfiguration = async () => {
-      try {
-        const config = await getSystemConfiguration();
-        setCurrentConfig(config);
-        
-        // Update states with current configuration
-        if (config.search_configuration) {
-          setSearchStrategy(config.search_configuration.search_strategy.current);
-          setMaxSources(config.search_configuration.max_sources.current);
-          setUseDecomposition(config.search_configuration.query_decomposition.enabled);
-        }
-      } catch (err) {
-        console.error("Failed to fetch configuration:", err);
+  // Function to refresh configuration
+  const refreshConfiguration = async () => {
+    try {
+      const config = await getSystemConfiguration();
+      setCurrentConfig(config);
+      
+      // Update states with current configuration
+      if (config.search_configuration) {
+        setSearchStrategy(config.search_configuration.search_strategy.current);
+        setMaxSources(config.search_configuration.max_sources.current);
+        setUseDecomposition(config.search_configuration.query_decomposition.enabled);
       }
-    };
-    fetchConfiguration();
-  }, []);
+      
+      // Also refresh reranker configuration
+      try {
+        const rerankerConfig = await getRerankerConfig();
+        setRerankerConfig(rerankerConfig);
+        setUseReranking(rerankerConfig.reranking_enabled_by_default);
+        setRerankerModel(rerankerConfig.default_reranker_model);
+        console.log("Reranker config refreshed:", rerankerConfig);
+      } catch (rerankerErr) {
+        console.error("Failed to fetch reranker configuration:", rerankerErr);
+      }
+      
+      console.log("Configuration refreshed:", config);
+    } catch (err) {
+      console.error("Failed to fetch configuration:", err);
+    }
+  };
+  
+  // Fetch current configuration on mount and when version changes
+  useEffect(() => {
+    refreshConfiguration();
+  }, [configVersion]);
+
+  // Listen for configuration changes from settings panel
+  useEffect(() => {
+    if (configChangeCounter > 0) {
+      console.log("Configuration change detected, refreshing...");
+      refreshConfiguration();
+    }
+  }, [configChangeCounter]);
 
   // Fetch BGE reranker configuration
   useEffect(() => {

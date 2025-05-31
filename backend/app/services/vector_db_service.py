@@ -410,8 +410,7 @@ def query_documents_advanced(
             query_embeddings=[query_embedding],
             n_results=initial_n_results
         )
-    
-    # Apply BGE reranking if requested and available
+      # Apply BGE reranking if requested and available
     if use_reranking and RERANKING_AVAILABLE and search_strategy != "hybrid":
         logger.info("Applying BGE reranking to improve result quality")
         try:
@@ -424,7 +423,12 @@ def query_documents_advanced(
             # Update search strategy to indicate reranking was applied
             search_strategy = f"{search_strategy}_reranked"
         except Exception as e:
-            logger.error(f"Reranking failed: {e}, using original results")
+            logger.error(f"BGE reranking failed: {e}, using original results without reranking")
+            # Continue with original results instead of failing completely
+    elif use_reranking and not RERANKING_AVAILABLE:
+        logger.warning("BGE reranking requested but not available, using original results")
+    elif use_reranking and search_strategy == "hybrid":
+        logger.info("BGE reranking skipped for hybrid search strategy")
     
     # Process and enhance results
     documents = results.get("documents", [[]])[0]

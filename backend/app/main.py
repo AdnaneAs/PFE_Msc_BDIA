@@ -74,12 +74,45 @@ async def get_available_models():
         "default_model": "llama3.2:latest"
     }
 
+def load_persistent_settings():
+    """
+    Load persistent settings and apply them to runtime configuration
+    """
+    try:
+        from app.services.settings_service import load_settings
+        import app.config as config
+        
+        settings = load_settings()
+        
+        # Apply reranking setting if available
+        if "reranking_enabled" in settings:
+            config.ENABLE_RERANKING_BY_DEFAULT = settings["reranking_enabled"]
+            logger.info(f"Applied persistent reranking setting: {settings['reranking_enabled']}")
+        
+        # Log API key availability without exposing the keys
+        api_keys_configured = []
+        if settings.get("api_key_openai"):
+            api_keys_configured.append("OpenAI")
+        if settings.get("api_key_gemini"):
+            api_keys_configured.append("Gemini")
+        if settings.get("api_key_huggingface"):
+            api_keys_configured.append("HuggingFace")
+        
+        if api_keys_configured:
+            logger.info(f"Persistent API keys loaded for: {', '.join(api_keys_configured)}")
+        
+        logger.info("Persistent settings loaded successfully")
+        
+    except Exception as e:
+        logger.warning(f"Failed to load persistent settings: {e}")
+
 # Add startup event to initialize services
 @app.on_event("startup")
 async def startup_event():
     try:
         logger.info("Initializing services...")
         await init_db()
+        load_persistent_settings()
         logger.info("Services initialized successfully")
     except Exception as e:
         logger.error(f"Error during startup: {str(e)}", exc_info=True)

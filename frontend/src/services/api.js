@@ -895,27 +895,50 @@ export const toggleQueryDecomposition = async (enabled) => {
 };
 
 /**
- * Store API key for a provider (temporary session storage)
+ * Store API key for a provider with persistent backend storage
  * @param {string} provider - Provider name (openai, gemini, huggingface)
  * @param {string} apiKey - The API key to store
  * @returns {Promise<Object>} Storage result
  */
 export const storeApiKey = async (provider, apiKey) => {
   try {
-    // For now, use session storage until backend implements the endpoints
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/config/api-keys/${provider}`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ api_key: apiKey }),
+    });
+    
+    const result = await handleApiResponse(response);
+    
+    // Also store in session storage as fallback for immediate use
     if (apiKey && apiKey.trim()) {
       sessionStorage.setItem(`api_key_${provider}`, apiKey.trim());
     } else {
       sessionStorage.removeItem(`api_key_${provider}`);
     }
     
-    return { 
-      success: true, 
-      message: `API key ${apiKey ? 'stored' : 'cleared'} for ${provider}` 
-    };
+    return result;
   } catch (error) {
     console.error('Failed to store API key:', error);
-    throw new Error(`Failed to store API key for ${provider}: ${error.message}`);
+    
+    // Fallback to session storage if backend fails
+    try {
+      if (apiKey && apiKey.trim()) {
+        sessionStorage.setItem(`api_key_${provider}`, apiKey.trim());
+      } else {
+        sessionStorage.removeItem(`api_key_${provider}`);
+      }
+      
+      return { 
+        success: true, 
+        message: `API key ${apiKey ? 'stored' : 'cleared'} for ${provider} (session only)`,
+        fallback: true
+      };
+    } catch (fallbackError) {
+      throw new Error(`Failed to store API key for ${provider}: ${error.message}`);
+    }
   }
 };
 
@@ -925,18 +948,26 @@ export const storeApiKey = async (provider, apiKey) => {
  */
 export const getApiKeysStatus = async () => {
   try {
-    // For now, check session storage until backend implements the endpoints
-    const status = {
-      openai: !!sessionStorage.getItem('api_key_openai'),
-      gemini: !!sessionStorage.getItem('api_key_gemini'),
-      huggingface: !!sessionStorage.getItem('api_key_huggingface')
-    };
-    
-    return status;
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/config/api-keys/status`);
+    const result = await handleApiResponse(response);
+    return result.api_keys;
   } catch (error) {
-    console.error('Failed to get API keys status:', error);
-    // Return default status on error
-    return { openai: false, gemini: false, huggingface: false };
+    console.error('Failed to get API keys status from backend:', error);
+    
+    // Fallback to session storage if backend fails
+    try {
+      const status = {
+        openai: !!sessionStorage.getItem('api_key_openai'),
+        gemini: !!sessionStorage.getItem('api_key_gemini'),
+        huggingface: !!sessionStorage.getItem('api_key_huggingface')
+      };
+      
+      return status;
+    } catch (fallbackError) {
+      console.error('Failed to get API keys status from session storage:', fallbackError);
+      // Return default status on error
+      return { openai: false, gemini: false, huggingface: false };
+    }
   }
 };
 
@@ -947,16 +978,31 @@ export const getApiKeysStatus = async () => {
  */
 export const clearApiKey = async (provider) => {
   try {
-    // For now, use session storage until backend implements the endpoints
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/config/api-keys/${provider}`, {
+      method: 'DELETE',
+    });
+    
+    const result = await handleApiResponse(response);
+    
+    // Also clear from session storage
     sessionStorage.removeItem(`api_key_${provider}`);
     
-    return { 
-      success: true, 
-      message: `API key cleared for ${provider}` 
-    };
+    return result;
   } catch (error) {
-    console.error('Failed to clear API key:', error);
-    throw new Error(`Failed to clear API key for ${provider}: ${error.message}`);
+    console.error('Failed to clear API key from backend:', error);
+    
+    // Fallback to clearing session storage if backend fails
+    try {
+      sessionStorage.removeItem(`api_key_${provider}`);
+      
+      return { 
+        success: true, 
+        message: `API key cleared for ${provider} (session only)`,
+        fallback: true
+      };
+    } catch (fallbackError) {
+      throw new Error(`Failed to clear API key for ${provider}: ${error.message}`);
+    }
   }
 };
 
@@ -989,18 +1035,18 @@ export const getRerankerConfig = async () => {
 };
 
 /**
- * Toggle BGE reranking on/off for the system
+ * Toggle BGE reranking on/off for the system with persistent storage
  * @param {boolean} enable - Whether to enable reranking
  * @returns {Promise<Object>} Toggle result with status
  */
 export const toggleReranking = async (enable) => {
   try {
-    const response = await fetchWithRetry(`${API_BASE_URL}/api/query/reranker/toggle`, {
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/config/reranking/toggle`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
       },
-      body: JSON.stringify(enable),
+      body: JSON.stringify({ enabled: enable }),
     });
     return await handleApiResponse(response);
   } catch (error) {

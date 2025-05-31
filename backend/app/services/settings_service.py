@@ -18,6 +18,10 @@ DEFAULT_SETTINGS = {
     "search_strategy": "hybrid",
     "max_sources": 5,
     "query_decomposition_enabled": False,
+    "reranking_enabled": True,
+    "api_key_openai": None,
+    "api_key_gemini": None,
+    "api_key_huggingface": None,
     "last_updated": None
 }
 

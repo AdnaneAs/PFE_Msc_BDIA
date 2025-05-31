@@ -78,45 +78,44 @@ HUGGINGFACE_MODEL_CONFIGS = {
 
 def make_rag_prompt(query: str, relevant_passages: List[str]) -> str:
     """
-    Create an enhanced RAG prompt for LLMs with optimized instructions
+    Create an optimized RAG prompt for faster and more accurate responses
     
     Args:
         query: User's question
         relevant_passages: List of relevant text passages
         
     Returns:
-        str: Formatted prompt for the LLM
+        str: Optimized formatted prompt for the LLM
     """
-    # Clean and join the passages with clear section markers
-    cleaned_passages = []
-    for i, passage in enumerate(relevant_passages):
-        # Clean the passage of problematic characters
-        cleaned = passage.replace("\n", " ").strip()
-        # Add a section marker with reference number
-        cleaned_passages.append(f"[{i+1}] {cleaned}")
-    
-    context_text = "\n\n".join(cleaned_passages)
-    
-    # Create an enhanced system prompt
-    prompt = f"""You are a knowledgeable assistant answering questions based on provided reference passages.
+    # Optimize passage processing for performance
+    context_text = ""
+    if relevant_passages:
+        for i, passage in enumerate(relevant_passages, 1):
+            # Clean and truncate passages for better performance
+            cleaned = passage.replace("\n", " ").strip()
+            # Limit passage length to reduce token count and improve speed
+            if len(cleaned) > 400:
+                cleaned = cleaned[:400] + "..."
+            context_text += f"[{i}] {cleaned}\n\n"
+    else:
+        context_text = "[No relevant documents available]"
 
-INSTRUCTIONS:
-1. Answer ONLY based on the information in the provided passages.
-2. If the passages don't contain relevant information, say "I don't have enough information to answer that question."
-3. Include citation numbers [1], [2], etc. when referencing specific information from the passages.
-4. Provide thorough, accurate answers while explaining complex concepts clearly.
-5. Use a concise, informative tone.
+    # Optimized prompt - shorter, clearer, faster to process
+    prompt = f"""Answer based ONLY on the provided references.
+
+RULES:
+• Use only information from references below
+• Cite sources: [1], [2], etc.
+• If no relevant info: "I don't have enough information in the provided documents to answer this question."
+• If unrelated: "This question is not covered in the available documents."
+• Be concise and accurate
 
 QUESTION: {query}
 
-REFERENCE PASSAGES:
-{context_text}
-
-ANSWER:
-"""
+REFERENCES:
+{context_text}ANSWER:"""
     
-    logger.info(f"Created enhanced RAG prompt with {len(relevant_passages)} reference passages")
-    logger.debug(f"Prompt first 100 chars: {prompt[:100]}...")
+    logger.info(f"Created optimized prompt: {len(relevant_passages)} passages, {len(prompt)} chars")
     
     return prompt
 
@@ -195,14 +194,15 @@ def query_ollama_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
         "model": model,
         "prompt": full_prompt,
         "stream": False,
-        # Add options to speed up generation
+        # Optimized parameters for faster, more focused responses
         "options": {
-            "temperature": 0.1,  # Lower temperature for more deterministic responses
-            "top_p": 0.9,
-            "num_predict": 512,  # Reduced from 60000 for faster responses
-            "num_ctx": 2048,     # Reduced context window for faster processing
-            "top_k": 40,         # Limit top-k sampling for speed
-            "repeat_penalty": 1.1
+            "temperature": 0.0,     # Deterministic responses for consistency
+            "top_p": 0.8,           # Reduced for more focused responses
+            "num_predict": 300,     # Reduced from 512 for faster generation
+            "num_ctx": 1536,        # Reduced context window for speed
+            "top_k": 20,            # Reduced top-k for faster sampling
+            "repeat_penalty": 1.05, # Slight penalty to avoid repetition
+            "stop": ["\n\nQUESTION:", "\n\nREFERENCES:", "QUESTION:", "REFERENCES:"]  # Stop tokens for cleaner output
         }
     }
     
@@ -268,7 +268,7 @@ def query_ollama_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
 
 def query_openai_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     """
-    Query OpenAI's LLM API
+    Query OpenAI's LLM API with dynamic API key loading
     
     Args:
         prompt: The formatted prompt
@@ -279,8 +279,8 @@ def query_openai_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     """
     global llm_status
     
-    # Get API key and model from config or use defaults
-    api_key = OPENAI_API_KEY
+    # Get API key and model from config or use defaults - always check fresh
+    api_key = None
     model = DEFAULT_OPENAI_MODEL
     
     if model_config:
@@ -289,6 +289,21 @@ def query_openai_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
         if 'model' in model_config:
             model = model_config.get('model')
     
+    # If no API key in config, check environment first
+    if not api_key:
+        api_key = OPENAI_API_KEY
+    
+    # Always check settings for the most recent API key (force fresh load)
+    if not api_key:
+        try:
+            from app.services.settings_service import load_settings
+            settings = load_settings()  # This loads fresh from file
+            api_key = settings.get('api_key_openai')
+            if api_key:
+                logger.info("Using OpenAI API key from persistent settings")
+        except Exception as e:
+            logger.warning(f"Could not load API key from settings: {e}")
+    
     # Update status
     llm_status["is_processing"] = True
     llm_status["last_model_used"] = f"openai/{model}"
@@ -296,6 +311,7 @@ def query_openai_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     llm_status["total_queries"] += 1
     
     logger.info(f"Querying OpenAI LLM with model: {model}")
+    logger.info(f"API key available: {bool(api_key)}")
     
     # Attempt to use OpenAI if configured
     try:
@@ -342,7 +358,7 @@ def query_openai_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
 
 def query_gemini_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     """
-    Query Google's Gemini API
+    Query Google's Gemini API with dynamic API key loading
     
     Args:
         prompt: The formatted prompt
@@ -353,8 +369,8 @@ def query_gemini_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     """
     global llm_status
     
-    # Get API key and model from config or use defaults
-    api_key = GEMINI_API_KEY
+    # Get API key from config, settings, or environment - always check fresh
+    api_key = None
     model = DEFAULT_GEMINI_MODEL
     
     if model_config:
@@ -363,6 +379,21 @@ def query_gemini_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
         if 'model' in model_config:
             model = model_config.get('model')
     
+    # If no API key in config, always load fresh from settings
+    if not api_key:
+        api_key = GEMINI_API_KEY  # Check environment first
+        
+    # Always check settings for the most recent API key (force fresh load)
+    if not api_key:
+        try:
+            from app.services.settings_service import load_settings
+            settings = load_settings()  # This loads fresh from file
+            api_key = settings.get('api_key_gemini')
+            if api_key:
+                logger.info("Using Gemini API key from persistent settings")
+        except Exception as e:
+            logger.warning(f"Could not load API key from settings: {e}")
+    
     # Update status
     llm_status["is_processing"] = True
     llm_status["last_model_used"] = f"gemini/{model}"
@@ -370,6 +401,7 @@ def query_gemini_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     llm_status["total_queries"] += 1
     
     logger.info(f"Querying Gemini LLM with model: {model}")
+    logger.info(f"API key available: {bool(api_key)}")
     
     try:
         try:

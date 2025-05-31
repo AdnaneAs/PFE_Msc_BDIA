@@ -18,7 +18,7 @@ import ModelSelectionSection from './config/ModelSelectionSection';
 import SearchConfigurationSection from './config/SearchConfigurationSection';
 import BGERerankerSection from './config/BGERerankerSection';
 
-const ConfigurationPanel = ({ isOpen, onClose }) => {
+const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
   const [config, setConfig] = useState(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -86,12 +86,16 @@ const ConfigurationPanel = ({ isOpen, onClose }) => {
         setLoading(false);
       }
     }
-  };
-  const handleConfigUpdate = async (updateFunction, successMessage) => {
+  };  const handleConfigUpdate = async (updateFunction, successMessage) => {
     try {
       setSaving(true);
       await updateFunction();
       await loadConfiguration(); // Refresh configuration - won't show loading spinner
+      
+      // Notify parent component about configuration change
+      if (onConfigurationChange) {
+        onConfigurationChange();
+      }
       
       // Show success message
       if (successMessage) {
@@ -143,8 +147,7 @@ const ConfigurationPanel = ({ isOpen, onClose }) => {
       () => toggleQueryDecomposition(enabled),
       `Query decomposition ${enabled ? 'enabled' : 'disabled'}`
     );
-  };
-  const handleApiKeyChange = async (provider, value) => {
+  };  const handleApiKeyChange = async (provider, value) => {
     try {
       setSaving(true);
       
@@ -164,6 +167,11 @@ const ConfigurationPanel = ({ isOpen, onClose }) => {
           [provider]: ''
         }));
         console.log(`API key cleared for ${provider}`);
+      }
+      
+      // Notify parent component about configuration change
+      if (onConfigurationChange) {
+        onConfigurationChange();
       }
     } catch (err) {
       setError(`Failed to update API key for ${provider}: ` + err.message);

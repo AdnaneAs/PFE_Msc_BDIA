@@ -14,6 +14,7 @@ function App() {
   const [queryResult, setQueryResult] = useState(null);
   const [refreshDocuments, setRefreshDocuments] = useState(0);
   const [showConfig, setShowConfig] = useState(false);
+  const [configChangeCounter, setConfigChangeCounter] = useState(0);
 
   useEffect(() => {
     async function fetchData() {
@@ -49,6 +50,13 @@ function App() {
       setQueryResult(null);
     }
   };
+
+  // Handle configuration changes from the settings panel
+  const handleConfigurationChange = () => {
+    setConfigChangeCounter(prev => prev + 1);
+    console.log("Configuration changed, notifying components");
+  };
+    
     // Handle document upload completion to trigger a documents list refresh
   const handleUploadComplete = (documentIds) => {
     if (Array.isArray(documentIds)) {
@@ -94,7 +102,10 @@ function App() {
           <div className="grid grid-cols-1 gap-6">
             <FileUpload onUploadComplete={handleUploadComplete} />
             <DocumentList refreshTrigger={refreshDocuments} />
-            <QueryInput onQueryResult={handleQueryResult} />
+            <QueryInput 
+              onQueryResult={handleQueryResult} 
+              configChangeCounter={configChangeCounter}
+            />
             <ResultDisplay result={queryResult} />
           </div>
         </main>
@@ -107,7 +118,8 @@ function App() {
       {/* Configuration Panel */}
       <ConfigurationPanel 
         isOpen={showConfig} 
-        onClose={() => setShowConfig(false)} 
+        onClose={() => setShowConfig(false)}
+        onConfigurationChange={handleConfigurationChange}
       />
     </div>
   );
