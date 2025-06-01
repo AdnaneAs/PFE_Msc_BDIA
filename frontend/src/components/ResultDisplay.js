@@ -356,7 +356,7 @@ const ResultDisplay = ({ result }) => {
   
   // Format time values for display
   const formatTime = (time) => {
-    if (!time && time !== 0) return 'N/A';
+    if (time === undefined || time === null) return 'N/A';
     if (time < 1000) return `${time}ms`;
     return `${(time / 1000).toFixed(2)}s`;
   };
@@ -634,7 +634,9 @@ const ResultDisplay = ({ result }) => {
               )}
               
               {/* Time distribution visualization - adapted for decomposed queries */}
-              {retrieval_time_ms && llm_time_ms && (total_query_time_ms || query_time_ms) && !isStreaming && (
+              {(retrieval_time_ms !== undefined && retrieval_time_ms !== null) && 
+               (llm_time_ms !== undefined && llm_time_ms !== null) && 
+               (total_query_time_ms || query_time_ms) && !isStreaming && (
                 <div className="mt-3 pt-2 border-t border-gray-200">
                   <h5 className="font-medium mb-2 text-gray-700">Time Distribution:</h5>
                   <div className="w-full h-4 bg-gray-200 rounded-full overflow-hidden flex">

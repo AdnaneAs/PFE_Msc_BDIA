@@ -198,8 +198,7 @@ SYNTHESIZED ANSWER:"""
             if not queries:
                 queries = [query]
                 is_complex = False
-            
-            # Cache the result
+              # Cache the result
             result = (is_complex, queries)
             self.decomposition_cache[cache_key] = result
             
@@ -210,10 +209,11 @@ SYNTHESIZED ANSWER:"""
             return result
             
         except Exception as e:
-            logger.error(f"Error in query decomposition: {e}")            # Fallback to treating as simple query
+            logger.error(f"Error in query decomposition: {e}")
+            # Fallback to treating as simple query
             return False, [query]
     
-    async def process_sub_query(self, sub_query: str, model_config: Dict[str, Any] = None, 
+    async def process_sub_query(self, sub_query: str, model_config: Dict[str, Any] = None,
                                 max_sources: int = 5, search_strategy: str = "semantic",
                                 use_reranking: bool = False, reranker_model: str = "BAAI/bge-reranker-base") -> Dict[str, Any]:
         """
@@ -234,14 +234,19 @@ SYNTHESIZED ANSWER:"""
         
         try:
             logger.info(f"Processing sub-query: {sub_query[:100]}...")
-              # Generate embedding for the sub-query using current model
+            
+            # Mark retrieval start
+            retrieval_start = time.time()
+            
+            # Generate embedding for the sub-query using current model
             query_embedding = generate_embedding(sub_query)
             
             # Get current embedding model info
             from app.services.embedding_service import get_current_model_info
             current_model = get_current_model_info()
             model_name = current_model.get("name", "all-MiniLM-L6-v2")
-              # Query documents using model-specific collection with optional reranking
+            
+            # Query documents using model-specific collection with optional reranking
             query_results = query_documents_advanced(
                 query_embedding=query_embedding,
                 query_text=sub_query,
@@ -256,6 +261,9 @@ SYNTHESIZED ANSWER:"""
             metadatas = query_results["metadatas"]
             relevance_scores = query_results.get("relevance_scores", [])
             
+            # Mark retrieval end
+            retrieval_time_ms = int((time.time() - retrieval_start) * 1000)
+            
             if not documents:
                 logger.warning(f"No relevant documents found for sub-query: {sub_query[:50]}...")
                 return {
@@ -264,15 +272,23 @@ SYNTHESIZED ANSWER:"""
                     "sources": [],
                     "num_sources": 0,
                     "relevance_scores": [],
-                    "processing_time_ms": int((time.time() - start_time) * 1000)
+                    "processing_time_ms": int((time.time() - start_time) * 1000),
+                    "retrieval_time_ms": retrieval_time_ms,
+                    "llm_time_ms": 0
                 }
+            
+            # Mark LLM start
+            llm_start = time.time()
             
             # Get answer from LLM
             answer, model_info = get_answer_from_llm(sub_query, documents, model_config)
             
+            # Mark LLM end
+            llm_time_ms = int((time.time() - llm_start) * 1000)
+            
             processing_time = int((time.time() - start_time) * 1000)
             
-            logger.info(f"Sub-query processed in {processing_time}ms with {len(documents)} sources")
+            logger.info(f"Sub-query processed in {processing_time}ms with {len(documents)} sources (retrieval: {retrieval_time_ms}ms, LLM: {llm_time_ms}ms)")
             
             return {
                 "sub_query": sub_query,
@@ -281,6 +297,8 @@ SYNTHESIZED ANSWER:"""
                 "num_sources": len(documents),
                 "relevance_scores": relevance_scores,
                 "processing_time_ms": processing_time,
+                "retrieval_time_ms": retrieval_time_ms,
+                "llm_time_ms": llm_time_ms,
                 "model_info": model_info
             }
             

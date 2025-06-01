@@ -275,6 +275,8 @@ async def query_with_decomposition(request: QueryRequest):
                 num_sources=sub_result["num_sources"],
                 relevance_scores=sub_result["relevance_scores"],
                 processing_time_ms=sub_result["processing_time_ms"],
+                retrieval_time_ms=sub_result.get("retrieval_time_ms"),
+                llm_time_ms=sub_result.get("llm_time_ms"),
                 model_info=sub_result.get("model_info")
             )
             sub_results.append(sub_query_result)
@@ -309,6 +311,23 @@ async def query_with_decomposition(request: QueryRequest):
         # Calculate aggregate metrics
         total_query_time_ms = int((time.time() - start_time) * 1000)
         
+        # Aggregate timing metrics from all sub-queries
+        total_retrieval_time = sum(sr.retrieval_time_ms for sr in sub_results if sr.retrieval_time_ms is not None)
+        total_llm_time = sum(sr.llm_time_ms for sr in sub_results if sr.llm_time_ms is not None)
+        
+        # Set to None if no timing data was collected
+        aggregated_retrieval_time = total_retrieval_time if total_retrieval_time > 0 else None
+        aggregated_llm_time = total_llm_time if total_llm_time > 0 else None
+        
+        # Determine if reranking was used (from request parameters)
+        from app.config import ENABLE_RERANKING_BY_DEFAULT, DEFAULT_RERANKER_MODEL
+        reranking_was_used = request.use_reranking if request.use_reranking is not None else ENABLE_RERANKING_BY_DEFAULT
+        reranker_model_used = request.reranker_model or DEFAULT_RERANKER_MODEL if reranking_was_used else None
+        
+        # Log timing aggregation for debugging
+        logger.info(f"Timing aggregation - Retrieval: {aggregated_retrieval_time}ms, LLM: {aggregated_llm_time}ms (from {len(sub_results)} sub-queries)")
+        logger.info(f"BGE Reranking - Used: {reranking_was_used}, Model: {reranker_model_used}")
+        
         # Collect all unique sources
         all_sources = []
         all_relevance_scores = []
@@ -341,11 +360,15 @@ async def query_with_decomposition(request: QueryRequest):
             total_query_time_ms=total_query_time_ms,
             decomposition_time_ms=decomposition_time_ms,
             synthesis_time_ms=synthesis_time_ms,
+            retrieval_time_ms=aggregated_retrieval_time,
+            llm_time_ms=aggregated_llm_time,
             model=synthesis_model if is_complex else (sub_results[0].model_info if sub_results else "unknown"),
             search_strategy=request.search_strategy or "semantic",
             total_sources=len(unique_sources),
             average_relevance=avg_relevance,
-            top_relevance=top_relevance
+            top_relevance=top_relevance,
+            reranking_used=reranking_was_used,
+            reranker_model=reranker_model_used
         )
         
     except Exception as e:
@@ -369,6 +392,8 @@ async def query_with_decomposition(request: QueryRequest):
                         num_sources=regular_response.num_sources,
                         relevance_scores=[],
                         processing_time_ms=regular_response.query_time_ms,
+                        retrieval_time_ms=getattr(regular_response, 'retrieval_time_ms', None),
+                        llm_time_ms=getattr(regular_response, 'llm_time_ms', None),
                         model_info=regular_response.model
                     )
                 ],
@@ -376,11 +401,15 @@ async def query_with_decomposition(request: QueryRequest):
                 total_query_time_ms=regular_response.query_time_ms,
                 decomposition_time_ms=None,
                 synthesis_time_ms=None,
+                retrieval_time_ms=getattr(regular_response, 'retrieval_time_ms', None),
+                llm_time_ms=getattr(regular_response, 'llm_time_ms', None),
                 model=regular_response.model,
                 search_strategy=regular_response.search_strategy,
                 total_sources=regular_response.num_sources,
                 average_relevance=regular_response.average_relevance,
-                top_relevance=regular_response.top_relevance
+                top_relevance=regular_response.top_relevance,
+                reranking_used=getattr(regular_response, 'reranking_used', None),
+                reranker_model=getattr(regular_response, 'reranker_model', None)
             )
         except Exception as fallback_error:
             logger.error(f"Fallback query also failed: {fallback_error}")

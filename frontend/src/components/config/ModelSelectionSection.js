@@ -7,9 +7,10 @@ const ModelSelectionSection = ({
   onLLMProviderChange,
   onLLMModelChange,
   onApiKeyChange,
+  onRefreshModels,
   apiKeys = {},
   disabled
-}) => {  const { llm, embedding } = config;
+}) => {const { llm, embedding } = config;
   const [showApiKeyModal, setShowApiKeyModal] = useState(false);
   const [apiKeyLoading, setApiKeyLoading] = useState(false);
   
@@ -46,14 +47,34 @@ const ModelSelectionSection = ({
       setApiKeyLoading(false);
     }
   };
-
   return (
     <div className="bg-white border border-gray-200 rounded-lg">
       <div className="bg-gray-50 px-6 py-4 border-b border-gray-200">
-        <h3 className="text-lg font-semibold text-gray-800">Model Selection</h3>
-        <p className="text-sm text-gray-600 mt-1">
-          Configure AI models for language processing and embeddings
-        </p>
+        <div className="flex items-center justify-between">
+          <div>
+            <h3 className="text-lg font-semibold text-gray-800">Model Selection</h3>
+            <p className="text-sm text-gray-600 mt-1">
+              Configure AI models for language processing and embeddings
+            </p>
+          </div>
+          <button
+            onClick={onRefreshModels}
+            disabled={disabled}
+            className={`
+              flex items-center space-x-2 px-3 py-2 text-sm font-medium rounded-lg border transition-colors
+              ${disabled 
+                ? 'bg-gray-100 text-gray-400 border-gray-200 cursor-not-allowed' 
+                : 'bg-white text-gray-700 border-gray-300 hover:bg-gray-50 hover:border-gray-400'
+              }
+            `}
+            title="Refresh available models"
+          >
+            <svg className="w-4 h-4" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+              <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+            </svg>
+            <span>Refresh Models</span>
+          </button>
+        </div>
       </div>
 
       <div className="p-6 space-y-6">
@@ -154,33 +175,84 @@ const ModelSelectionSection = ({
               </div>
             </div>
           </div>
-        )}
-
-        {/* Ollama Model Selection */}
+        )}        {/* Ollama Model Selection */}
         {llm.current_provider === 'ollama' && (
           <div>
-            <label className="block text-sm font-medium text-gray-700 mb-3">
-              Ollama Model
-            </label>
-            <select
-              value={llm.current_model}
-              onChange={(e) => !disabled && onLLMModelChange(e.target.value)}
-              disabled={disabled}
-              className={`
-                w-full md:w-auto min-w-[200px] px-3 py-2 border border-gray-300 rounded-md
-                focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
-                ${disabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'}
-              `}
-            >
-              {llm.available_providers.ollama.models.map((model) => (
-                <option key={model} value={model}>
-                  {model}
-                </option>
-              ))}
-            </select>
-            <p className="text-xs text-gray-500 mt-2">
-              Selected model: <span className="font-medium">{llm.current_model}</span>
-            </p>
+            <div className="flex items-center justify-between mb-3">
+              <label className="block text-sm font-medium text-gray-700">
+                Ollama Model
+              </label>
+              <div className="flex items-center space-x-2">
+                {onRefreshModels && (
+                  <button
+                    onClick={() => !disabled && onRefreshModels()}
+                    disabled={disabled}
+                    className="px-3 py-1 text-xs font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1"
+                    title="Refresh available models"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span>Refresh</span>
+                  </button>
+                )}
+                {llm.available_providers.ollama.status === 'unavailable' && (
+                  <span className="text-xs text-orange-600 bg-orange-50 px-2 py-1 rounded">
+                    Ollama not running
+                  </span>
+                )}
+              </div>
+            </div>
+            
+            {llm.available_providers.ollama.models && llm.available_providers.ollama.models.length > 0 ? (
+              <div>
+                <select
+                  value={llm.current_model}
+                  onChange={(e) => !disabled && onLLMModelChange(e.target.value)}
+                  disabled={disabled}
+                  className={`
+                    w-full md:w-auto min-w-[200px] px-3 py-2 border border-gray-300 rounded-md
+                    focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
+                    ${disabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'}
+                  `}
+                >
+                  {llm.available_providers.ollama.models.map((model) => (
+                    <option key={model} value={model}>
+                      {model}
+                    </option>
+                  ))}
+                </select>
+                <p className="text-xs text-gray-500 mt-2">
+                  Selected model: <span className="font-medium">{llm.current_model}</span>
+                </p>
+                <p className="text-xs text-green-600 mt-1">
+                  ✓ {llm.available_providers.ollama.models.length} model(s) available locally
+                </p>
+              </div>
+            ) : (
+              <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-4">
+                <div className="flex items-start space-x-3">
+                  <div className="flex-shrink-0">
+                    <svg className="h-5 w-5 text-yellow-600" viewBox="0 0 20 20" fill="currentColor">
+                      <path fillRule="evenodd" d="M8.257 3.099c.765-1.36 2.722-1.36 3.486 0l5.58 9.92c.75 1.334-.213 2.98-1.742 2.98H4.42c-1.53 0-2.493-1.646-1.743-2.98l5.58-9.92zM11 13a1 1 0 11-2 0 1 1 0 012 0zm-1-8a1 1 0 00-1 1v3a1 1 0 002 0V6a1 1 0 00-1-1z" clipRule="evenodd" />
+                    </svg>
+                  </div>
+                  <div className="flex-1">
+                    <h4 className="text-sm font-medium text-yellow-800 mb-2">
+                      No Ollama Models Available
+                    </h4>
+                    <p className="text-sm text-yellow-700 mb-3">
+                      Either Ollama is not running or no models are installed. To use Ollama:
+                    </p>
+                    <ol className="text-sm text-yellow-700 list-decimal list-inside space-y-1">
+                      <li>Start Ollama: <code className="bg-yellow-100 px-1 rounded">ollama serve</code></li>
+                      <li>Pull a model: <code className="bg-yellow-100 px-1 rounded">ollama pull llama3.2:latest</code></li>
+                      <li>Refresh this page</li>
+                    </ol>
+                  </div>
+                </div>
+              </div>
+            )}
           </div>
         )}
 

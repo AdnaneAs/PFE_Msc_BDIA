@@ -133,8 +133,8 @@ const fetchWithRetry = async (url, options = {}, retries = 1) => {
 };
 
 /**
- * Get available LLM models
- * @returns {Promise<Array>} List of available models grouped by provider
+ * Get available LLM models organized by provider
+ * @returns {Promise<Object>} Object with models grouped by provider
  */
 export const getAvailableLLMModels = async () => {
   try {
@@ -143,25 +143,11 @@ export const getAvailableLLMModels = async () => {
       throw new Error('Backend server is not available. Please ensure it is running on http://localhost:8000');
     }
 
-    const response = await fetch(`${API_BASE_URL}/api/query/models`);
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/llm/models`);
     const data = await handleApiResponse(response);
     
-    if (data && data.models) {
-      // Group models by provider for easier UI handling
-      const groupedModels = {
-        ollama: [],
-        openai: [],
-        gemini: [],
-        huggingface: []
-      };
-      
-      data.models.forEach(model => {
-        if (groupedModels[model.provider]) {
-          groupedModels[model.provider].push(model);
-        }
-      });
-      
-      return groupedModels;
+    if (data && data.providers) {
+      return data.providers;
     }
     
     return {
@@ -171,7 +157,30 @@ export const getAvailableLLMModels = async () => {
       huggingface: []
     };
   } catch (error) {
-    console.error('Error fetching available LLM models:', error);    throw error;
+    console.error('Error fetching available LLM models:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get available models for a specific provider
+ * @param {string} provider - Provider name (ollama, openai, gemini, huggingface)
+ * @returns {Promise<Object>} Provider models data
+ */
+export const getModelsForProvider = async (provider) => {
+  try {
+    const serverAvailable = await checkServerConnection();
+    if (!serverAvailable) {
+      throw new Error('Backend server is not available. Please ensure it is running on http://localhost:8000');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/llm/models/${provider}`);
+    const data = await handleApiResponse(response);
+    
+    return data;
+  } catch (error) {
+    console.error(`Error fetching models for provider ${provider}:`, error);
+    throw error;
   }
 };
 
@@ -1077,5 +1086,78 @@ export const testReranker = async (question, rerankerModel = 'BAAI/bge-reranker-
   } catch (error) {
     console.error('Failed to test reranker:', error);
     throw new Error(`Failed to test reranker: ${error.message}`);
+  }
+};
+
+/**
+ * Refresh available models cache
+ * @returns {Promise<Object>} Refreshed models data
+ */
+export const refreshAvailableModels = async () => {
+  try {
+    const serverAvailable = await checkServerConnection();
+    if (!serverAvailable) {
+      throw new Error('Backend server is not available. Please ensure it is running on http://localhost:8000');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/llm/models/refresh`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+    const data = await handleApiResponse(response);
+    
+    return data;
+  } catch (error) {
+    console.error('Error refreshing available models:', error);
+    throw error;
+  }
+};
+
+/**
+ * Clear models cache
+ * @returns {Promise<Object>} Cache clearing result
+ */
+export const clearModelsCache = async () => {
+  try {
+    const serverAvailable = await checkServerConnection();
+    if (!serverAvailable) {
+      throw new Error('Backend server is not available. Please ensure it is running on http://localhost:8000');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/cache/clear`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      }
+    });
+    const data = await handleApiResponse(response);
+    
+    return data;
+  } catch (error) {
+    console.error('Error clearing models cache:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get cache status
+ * @returns {Promise<Object>} Cache status information
+ */
+export const getCacheStatus = async () => {
+  try {
+    const serverAvailable = await checkServerConnection();
+    if (!serverAvailable) {
+      throw new Error('Backend server is not available. Please ensure it is running on http://localhost:8000');
+    }
+
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/cache/status`);
+    const data = await handleApiResponse(response);
+    
+    return data;
+  } catch (error) {
+    console.error('Error getting cache status:', error);
+    throw error;
   }
 };

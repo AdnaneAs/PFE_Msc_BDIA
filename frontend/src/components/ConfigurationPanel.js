@@ -8,11 +8,14 @@ import {
   updateMaxSources,
   toggleQueryDecomposition,
   getAvailableLLMModels,
+  refreshAvailableModels,
+  getModelsForProvider,
   storeApiKey,
   getApiKeysStatus,
   clearApiKey,
   getRerankerConfig,
-  toggleReranking
+  toggleReranking,
+  clearModelsCache
 } from '../services/api';
 import ModelSelectionSection from './config/ModelSelectionSection';
 import SearchConfigurationSection from './config/SearchConfigurationSection';
@@ -48,8 +51,9 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
       if (!hasLoadedOnce) {
         setLoading(true);
       }
+        setError(null); // Clear any previous errors
       
-      setError(null); // Clear any previous errors        // Load configuration, available models, API keys status, and reranker config
+      // Load configuration, available models, API keys status, and reranker config
       const [configData, availableModels, apiKeysStatus, rerankerConfigData] = await Promise.all([
         getSystemConfiguration(),
         getAvailableLLMModels(),
@@ -57,10 +61,19 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
         getRerankerConfig()
       ]);
       
-      // Merge available Ollama models into the configuration
-      if (configData.model_selection?.llm?.available_providers?.ollama && availableModels.ollama) {
-        configData.model_selection.llm.available_providers.ollama.models = 
-          availableModels.ollama.map(model => model.name);
+      // Update all provider models with dynamic data
+      if (configData.model_selection?.llm?.available_providers && availableModels) {
+        Object.keys(availableModels).forEach(provider => {
+          if (configData.model_selection.llm.available_providers[provider]) {
+            configData.model_selection.llm.available_providers[provider].models = availableModels[provider];
+            
+            // Update status based on availability
+            if (provider === 'ollama') {
+              const hasModels = availableModels[provider] && availableModels[provider].length > 0;
+              configData.model_selection.llm.available_providers[provider].status = hasModels ? 'available' : 'unavailable';
+            }
+          }
+        });
       }
       
       setConfig(configData);
@@ -195,6 +208,20 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
     // Note: This is a frontend-only setting for now
     // In a production system, you might want to persist this to backend configuration
   };
+  // Function to refresh model cache
+  const handleRefreshModels = async () => {
+    setLoading(true);
+    try {
+      // Clear the model cache on the backend
+      await clearModelsCache();
+      // Reload the configuration to get fresh model data
+      await loadConfiguration();
+    } catch (err) {
+      setError('Failed to refresh models: ' + err.message);
+    } finally {
+      setLoading(false);
+    }
+  };
 
   if (!isOpen) return null;
 
@@ -244,13 +271,13 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
               </div>
             </div>
           ) : config ? (
-            <div className="space-y-8">              {/* Model Selection Section */}
-              <ModelSelectionSection
+            <div className="space-y-8">              {/* Model Selection Section */}              <ModelSelectionSection
                 config={config.model_selection}
                 onEmbeddingModelChange={handleEmbeddingModelChange}
                 onLLMProviderChange={handleLLMProviderChange}
                 onLLMModelChange={handleLLMModelChange}
                 onApiKeyChange={handleApiKeyChange}
+                onRefreshModels={handleRefreshModels}
                 apiKeys={apiKeys}
                 disabled={saving}
               />

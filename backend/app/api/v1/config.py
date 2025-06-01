@@ -1,12 +1,20 @@
 from fastapi import APIRouter, HTTPException
 from typing import Dict, Any, Optional
 import logging
+from datetime import datetime
 from app.services.embedding_service import (
     get_available_models,
     get_current_model_info,
     set_embedding_model
 )
-from app.services.settings_service import load_settings, update_setting, get_setting
+from app.services.settings_service import (
+    load_settings, 
+    update_setting, 
+    get_setting,
+    get_available_models_by_provider,
+    update_model_with_validation,
+    get_ollama_models
+)
 from app.config import AVAILABLE_EMBEDDING_MODELS
 
 # Configure logging
@@ -35,46 +43,42 @@ async def get_system_configuration() -> Dict[str, Any]:
         
         # Get LLM configuration from settings
         current_llm_provider = user_settings.get("llm_provider", "ollama")
-        current_llm_model = user_settings.get("llm_model", "llama3.2:latest")
+        current_llm_model = user_settings.get("llm_model", "llama3.2:latest")        # Get available models by provider (uses caching)
+        available_models_by_provider = get_available_models_by_provider(force_refresh=False)
         
-        available_llm_providers = {
-            "ollama": {
-                "name": "ollama",
-                "display_name": "Ollama (Local)",
-                "description": "Local LLM inference with Ollama",
-                "status": "available",  # TODO: Check actual Ollama status
-                "models": [
-                    "llama3.2:latest",
-                    "llama3.2:1b", 
-                    "llama3.2:3b",
-                    "qwen2.5:latest",
-                    "qwen2.5:0.5b",
-                    "qwen2.5:1.5b",
-                    "qwen2.5:3b",
-                    "qwen2.5:7b"
-                ]
-            },
-            "openai": {
-                "name": "openai",
-                "display_name": "OpenAI",
-                "description": "OpenAI GPT models (API key required)",
-                "status": "unavailable",  # TODO: Check API key
-                "models": ["gpt-4", "gpt-3.5-turbo"]
-            },            "gemini": {
-                "name": "gemini", 
-                "display_name": "Google Gemini",
-                "description": "Google Gemini models (API key required)",
-                "status": "unavailable",  # TODO: Check API key
-                "models": ["gemini-1.5-flash", "gemini-1.5-pro", "gemini-1.0-pro"]
-            },
-            "huggingface": {
-                "name": "huggingface",
-                "display_name": "Hugging Face",
-                "description": "Hugging Face transformers (API key required)",
-                "status": "unavailable",  # TODO: Check API key
-                "models": ["custom"]
+        available_llm_providers = {}
+        for provider, models in available_models_by_provider.items():
+            provider_info = {
+                "name": provider,
+                "models": models
             }
-        }
+            
+            if provider == "ollama":
+                provider_info.update({
+                    "display_name": "Ollama (Local)",
+                    "description": "Local LLM inference with Ollama",
+                    "status": "available" if models else "unavailable"
+                })
+            elif provider == "openai":
+                provider_info.update({
+                    "display_name": "OpenAI",
+                    "description": "OpenAI GPT models (API key required)",
+                    "status": "available" if user_settings.get("api_key_openai") else "unavailable"
+                })
+            elif provider == "gemini":
+                provider_info.update({
+                    "display_name": "Google Gemini",
+                    "description": "Google Gemini models (API key required)",
+                    "status": "available" if user_settings.get("api_key_gemini") else "unavailable"
+                })
+            elif provider == "huggingface":
+                provider_info.update({
+                    "display_name": "Hugging Face",
+                    "description": "Hugging Face transformers (API key required)",
+                    "status": "available" if user_settings.get("api_key_huggingface") else "unavailable"
+                })
+            
+            available_llm_providers[provider] = provider_info
         
         configuration = {            "model_selection": {
                 "llm": {
@@ -319,20 +323,46 @@ async def update_llm_provider(request: Dict[str, str]) -> Dict[str, Any]:
     """
     try:
         provider = request.get("provider")
-        valid_providers = ["ollama", "openai", "gemini", "huggingface"]
+        available_providers = get_available_models_by_provider()
         
-        if provider not in valid_providers:
+        if provider not in available_providers:
             raise HTTPException(
                 status_code=400,
-                detail=f"Invalid provider. Must be one of: {valid_providers}"
+                detail=f"Invalid provider. Must be one of: {list(available_providers.keys())}"
             )
         
-        # Save to settings
+        # Get current model and check compatibility
+        current_model = get_setting("llm_model", "llama3.2:latest")
+        
+        # If switching providers, reset to first available model for that provider
+        if provider != get_setting("llm_provider"):
+            available_models = available_providers[provider]
+            if available_models:
+                new_model = available_models[0]
+                success = update_model_with_validation(provider, new_model)
+                if not success:
+                    raise HTTPException(
+                        status_code=400,
+                        detail=f"Failed to switch to provider '{provider}' with model '{new_model}'"
+                    )
+                return {
+                    "status": "success",
+                    "message": f"LLM provider changed to {provider} with model {new_model}",
+                    "provider": provider,
+                    "model": new_model
+                }
+            else:
+                raise HTTPException(
+                    status_code=400,
+                    detail=f"No models available for provider '{provider}'"
+                )
+        
+        # Same provider, just update the setting
         update_setting("llm_provider", provider)
         
         return {
             "status": "success",
-            "message": f"LLM provider changed to {provider}",
+            "message": f"LLM provider confirmed as {provider}",
             "provider": provider
         }
         
@@ -352,26 +382,38 @@ async def update_llm_provider(request: Dict[str, str]) -> Dict[str, Any]:
 )
 async def update_llm_model(request: Dict[str, str]) -> Dict[str, Any]:
     """
-    Update the LLM model setting
+    Update the LLM model setting with validation
     
     Args:
-        request: Dict containing 'model' key
+        request: Dict containing 'model' and optionally 'provider' keys
         
     Returns:
         Dict containing update result
     """
     try:
         model = request.get("model")
+        provider = request.get("provider") or get_setting("llm_provider", "ollama")
+        
         if not model:
             raise HTTPException(status_code=400, detail="model field is required")
         
-        # Save to settings
-        update_setting("llm_model", model)
+        # Use validation function
+        success = update_model_with_validation(provider, model)
+        
+        if not success:
+            # Get available models for error message
+            available_models = get_available_models_by_provider()
+            provider_models = available_models.get(provider, [])
+            raise HTTPException(
+                status_code=400,
+                detail=f"Invalid model '{model}' for provider '{provider}'. Available models: {provider_models}"
+            )
         
         return {
             "status": "success",
-            "message": f"LLM model changed to {model}",
-            "model": model
+            "message": f"LLM model changed to {model} (provider: {provider})",
+            "model": model,
+            "provider": provider
         }
         
     except HTTPException:
@@ -569,3 +611,200 @@ async def get_reranking_status():
     except Exception as e:
         logger.error(f"Error getting reranking status: {e}")
         raise HTTPException(status_code=500, detail=str(e))
+
+@router.get(
+    "/llm/models/{provider}",
+    summary="Get available models for a specific provider",
+    response_description="List of available models for the provider"
+)
+async def get_models_for_provider(provider: str) -> Dict[str, Any]:
+    """
+    Get available models for a specific LLM provider
+    
+    Args:
+        provider: Provider name (ollama, openai, gemini, huggingface)
+        
+    Returns:
+        Dict containing available models for the provider
+    """
+    try:
+        available_models = get_available_models_by_provider()
+        
+        if provider not in available_models:
+            raise HTTPException(
+                status_code=404,
+                detail=f"Provider '{provider}' not found. Available providers: {list(available_models.keys())}"
+            )
+        
+        models = available_models[provider]
+          # For Ollama, also include real-time availability status (cached)
+        if provider == "ollama":
+            fresh_models = get_ollama_models(force_refresh=False)
+            return {
+                "status": "success",
+                "provider": provider,
+                "models": models,
+                "available_locally": fresh_models,
+                "total_models": len(models),
+                "ollama_running": len(fresh_models) > 0,
+                "cached": True
+            }
+        
+        return {
+            "status": "success",
+            "provider": provider,
+            "models": models,
+            "total_models": len(models)
+        }
+        
+    except HTTPException:
+        raise
+    except Exception as e:
+        logger.error(f"Error getting models for provider {provider}: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get models for provider: {str(e)}"
+        )
+
+@router.get(
+    "/llm/models",
+    summary="Get all available models organized by provider",
+    response_description="All available models organized by provider"
+)
+async def get_all_available_models() -> Dict[str, Any]:
+    """
+    Get all available models organized by provider
+    
+    Returns:
+        Dict containing all models organized by provider
+    """
+    try:
+        available_models = get_available_models_by_provider()
+          # Add real-time status for Ollama (cached)
+        if "ollama" in available_models:
+            ollama_models = get_ollama_models(force_refresh=False)
+            available_models["ollama_status"] = {
+                "running": len(ollama_models) > 0,
+                "available_locally": ollama_models,
+                "cached": True
+            }
+        
+        return {
+            "status": "success",
+            "providers": available_models,
+            "total_providers": len([k for k in available_models.keys() if not k.endswith("_status")])
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting all available models: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get available models: {str(e)}"
+        )
+
+@router.post(
+    "/cache/clear",
+    summary="Clear models cache",
+    response_description="Result of cache clearing"
+)
+async def clear_models_cache_endpoint() -> Dict[str, Any]:
+    """
+    Clear models cache to force refresh
+    
+    Returns:
+        Dict containing cache clearing result
+    """
+    try:
+        from app.services.settings_service import clear_models_cache
+        clear_models_cache()
+        
+        return {
+            "status": "success",
+            "message": "Models cache cleared successfully"
+        }
+        
+    except Exception as e:
+        logger.error(f"Error clearing models cache: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to clear models cache: {str(e)}"
+        )
+
+@router.get(
+    "/cache/status",
+    summary="Get cache status",
+    response_description="Current cache status information"
+)
+async def get_cache_status() -> Dict[str, Any]:
+    """
+    Get information about the current cache status
+    
+    Returns:
+        Dict containing cache status information
+    """
+    try:
+        from app.services.settings_service import _ollama_models_cache, _ollama_cache_timestamp, _models_by_provider_cache, _models_cache_timestamp
+        from datetime import datetime
+        
+        now = datetime.now()
+        
+        ollama_cache_age = None
+        models_cache_age = None
+        
+        if _ollama_cache_timestamp:
+            ollama_cache_age = (now - _ollama_cache_timestamp).seconds
+            
+        if _models_cache_timestamp:
+            models_cache_age = (now - _models_cache_timestamp).seconds
+        
+        return {
+            "status": "success",
+            "ollama_cache": {
+                "has_data": _ollama_models_cache is not None,
+                "age_seconds": ollama_cache_age,
+                "model_count": len(_ollama_models_cache) if _ollama_models_cache else 0
+            },
+            "models_cache": {
+                "has_data": _models_by_provider_cache is not None,
+                "age_seconds": models_cache_age,
+                "providers": list(_models_by_provider_cache.keys()) if _models_by_provider_cache else []
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting cache status: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get cache status: {str(e)}"
+        )
+
+@router.post(
+    "/llm/models/refresh",
+    summary="Refresh available models cache",
+    response_description="Refreshed models list"
+)
+async def refresh_available_models() -> Dict[str, Any]:
+    """
+    Force refresh the available models cache
+    
+    Returns:
+        Dict containing refreshed models data
+    """
+    try:
+        # Force refresh the cache
+        available_models = get_available_models_by_provider(force_refresh=True)
+        
+        return {
+            "status": "success",
+            "message": "Models cache refreshed successfully",
+            "providers": available_models,
+            "total_providers": len(available_models),
+            "refreshed_at": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error refreshing available models: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to refresh available models: {str(e)}"
+        )

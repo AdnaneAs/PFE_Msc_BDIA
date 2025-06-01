@@ -96,6 +96,8 @@ class SubQueryResult(BaseModel):
     num_sources: int = Field(..., description="Number of sources used")
     relevance_scores: List[float] = Field(..., description="Relevance scores for sources")
     processing_time_ms: int = Field(..., description="Time taken to process this sub-query")
+    retrieval_time_ms: Optional[int] = Field(None, description="Time taken to retrieve documents for this sub-query")
+    llm_time_ms: Optional[int] = Field(None, description="Time taken by LLM for this sub-query")
     model_info: Optional[str] = Field(None, description="Model information")
 
 class DecomposedQueryResponse(BaseModel):
@@ -107,8 +109,12 @@ class DecomposedQueryResponse(BaseModel):
     total_query_time_ms: int = Field(..., description="Total time for the entire query process")
     decomposition_time_ms: Optional[int] = Field(None, description="Time taken for decomposition")
     synthesis_time_ms: Optional[int] = Field(None, description="Time taken for answer synthesis")
+    retrieval_time_ms: Optional[int] = Field(None, description="Total time taken to retrieve documents across all sub-queries")
+    llm_time_ms: Optional[int] = Field(None, description="Total time taken by LLM processing across all sub-queries")
     model: Optional[str] = Field(None, description="Primary model used")
     search_strategy: Optional[str] = Field(None, description="Search strategy used")
     total_sources: int = Field(..., description="Total number of unique sources across all sub-queries")
     average_relevance: Optional[float] = Field(None, description="Average relevance across all sub-queries")
     top_relevance: Optional[float] = Field(None, description="Highest relevance score across all sub-queries")
+    reranking_used: Optional[bool] = Field(None, description="Whether BGE reranking was applied")
+    reranker_model: Optional[str] = Field(None, description="BGE reranker model used, if any")
