@@ -352,9 +352,19 @@ def query_openai_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
         llm_status["is_processing"] = False
         return "OpenAI Python package is not installed. Please install it with 'pip install openai'.", f"openai/{model} (not installed)"
     except Exception as e:
-        logger.error(f"Error using OpenAI: {str(e)}")
+        error_str = str(e)
+        logger.error(f"Error using OpenAI: {error_str}")
         llm_status["is_processing"] = False
-        return f"Error with OpenAI API: {str(e)}", f"openai/{model} (error)"
+        
+        # Handle retryable errors by raising exceptions
+        if "429" in error_str or "rate_limit" in error_str.lower():
+            logger.warning("OpenAI API rate limit hit.")
+            raise Exception(f"429 RATE_LIMITED: {error_str}")
+        elif "503" in error_str or "service unavailable" in error_str.lower():
+            logger.warning("OpenAI API service unavailable.")
+            raise Exception(f"503 UNAVAILABLE: {error_str}")
+        else:
+            return f"Error with OpenAI API: {error_str}", f"openai/{model} (error)"
 
 def query_gemini_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     """
@@ -454,13 +464,19 @@ Be accurate, clear, and concise in your responses."""
         logger.error(f"Error using Gemini: {error_str}")
         llm_status["is_processing"] = False
         
-        # Handle specific quota limit errors
+        # Handle specific quota limit errors with retryable exceptions
         if "429" in error_str and "RESOURCE_EXHAUSTED" in error_str:
-            logger.warning("Gemini API quota exceeded. Consider using a local model or upgrading your Gemini plan.")
-            return "Error: Gemini API quota exceeded. Please try using a local model (like Ollama) or check your Gemini API quota limits.", f"gemini/{model} (quota_exceeded)"
+            logger.warning("Gemini API quota exceeded.")
+            # Raise exception for retry logic to catch
+            raise Exception(f"429 RESOURCE_EXHAUSTED: {error_str}")
         elif "429" in error_str:
-            logger.warning("Gemini API rate limit hit. Please wait before making more requests.")
-            return "Error: Gemini API rate limit exceeded. Please wait a moment before trying again.", f"gemini/{model} (rate_limited)"
+            logger.warning("Gemini API rate limit hit.")
+            # Raise exception for retry logic to catch
+            raise Exception(f"429 RATE_LIMITED: {error_str}")
+        elif "503" in error_str or "UNAVAILABLE" in error_str:
+            logger.warning("Gemini API server unavailable.")
+            # Raise exception for retry logic to catch
+            raise Exception(f"503 UNAVAILABLE: {error_str}")
         else:
             return f"Error with Gemini API: {error_str}", f"gemini/{model} (error)"
 
@@ -768,7 +784,10 @@ def get_answer_from_llm(question: str, context_documents: List[str], model_confi
     max_retries = 2  # Will try 3 times total (initial + 2 retries)
     retry_delay = 3  # 3 seconds delay between retries
     
+    logger.info(f"Starting LLM query with {provider} provider (max {max_retries + 1} attempts)")
+    
     for attempt in range(max_retries + 1):
+        logger.info(f"LLM query attempt {attempt + 1}/{max_retries + 1}")
         try:
             answer = None
             model_info = None
@@ -797,6 +816,8 @@ def get_answer_from_llm(question: str, context_documents: List[str], model_confi
                     break
             else:
                 # Success or non-retryable error
+                if attempt > 0:
+                    logger.info(f"LLM query succeeded on attempt {attempt + 1} after {attempt} retries")
                 break
                 
         except Exception as e:
@@ -804,16 +825,26 @@ def get_answer_from_llm(question: str, context_documents: List[str], model_confi
             logger.error(f"Exception during LLM call on attempt {attempt + 1}: {error_str}")
             
             # Check if it's a retryable error (rate limit, server unavailable)
-            if ("429" in error_str or "503" in error_str or "RESOURCE_EXHAUSTED" in error_str):
+            if ("429" in error_str or "503" in error_str or "RESOURCE_EXHAUSTED" in error_str or "UNAVAILABLE" in error_str):
                 if attempt < max_retries:
                     logger.warning(f"Retryable error detected on attempt {attempt + 1}, retrying in {retry_delay} seconds...")
                     time.sleep(retry_delay)
                     continue
                 else:
                     logger.error(f"Max retries ({max_retries}) reached for retryable error")
-                    # Return the error as the answer
-                    answer = f"Error: {error_str}"
-                    model_info = f"{provider} (error_after_retries)"
+                    # Return appropriate error message based on error type
+                    if "429" in error_str and "RESOURCE_EXHAUSTED" in error_str:
+                        answer = "Error: Gemini API quota exceeded. Please try using a local model (like Ollama) or check your Gemini API quota limits."
+                        model_info = f"{provider} (quota_exceeded_after_retries)"
+                    elif "429" in error_str:
+                        answer = "Error: API rate limit exceeded. Please wait a moment before trying again."
+                        model_info = f"{provider} (rate_limited_after_retries)"
+                    elif "503" in error_str or "UNAVAILABLE" in error_str:
+                        answer = "Error: The API service is temporarily unavailable. Please try again later."
+                        model_info = f"{provider} (unavailable_after_retries)"
+                    else:
+                        answer = f"Error: {error_str}"
+                        model_info = f"{provider} (error_after_retries)"
                     break
             else:
                 # Non-retryable error, don't retry
