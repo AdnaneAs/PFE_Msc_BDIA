@@ -38,7 +38,7 @@ async def test_settings_improvements():
         ("ollama", "invalid-model", False),
         ("openai", "gpt-4o", True),
         ("openai", "llama3.2:latest", False),  # Wrong provider
-        ("gemini", "gemini-1.5-pro", True),
+        ("gemini", "gemini-2.0-flash", True),
         ("gemini", "gpt-4", False),  # Wrong provider
     ]
     

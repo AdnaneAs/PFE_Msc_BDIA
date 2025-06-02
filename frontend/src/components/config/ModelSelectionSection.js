@@ -166,10 +166,15 @@ const ModelSelectionSection = ({
                     )}
                   </div>
                 </div>
-                
-                <p className="text-xs text-blue-700 mt-2">
+                  <p className="text-xs text-blue-700 mt-2">
                   {llm.current_provider === 'openai' && 'Required: OpenAI API key to access GPT models.'}
-                  {llm.current_provider === 'gemini' && 'Required: Google Gemini API key to access Gemini models.'}
+                  {llm.current_provider === 'gemini' && (
+                    <>
+                      Required: Google Gemini API key to access Gemini models.
+                      <br />
+                      <span className="text-amber-600">💡 Tip: Free tier has quota limits. Use Ollama models for unlimited local processing.</span>
+                    </>
+                  )}
                   {llm.current_provider === 'huggingface' && 'Optional: Hugging Face token for enhanced model access.'}
                 </p>
               </div>

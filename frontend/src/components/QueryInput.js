@@ -235,12 +235,23 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
       fetchLlmStatus();
     } catch (err) {
       console.error('Error submitting decomposed query:', err);
-      setError(err.message || 'Error submitting decomposed query');
+      
+      // Provide specific error messages for quota and rate limit issues
+      let errorMessage = err.message || 'Error submitting decomposed query';
+      let userMessage = 'Failed to process decomposed query';
+      
+      if (errorMessage.includes('quota exceeded') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
+        userMessage = 'API quota limit reached. Try using a local model (Ollama) instead.';
+      } else if (errorMessage.includes('rate limit') || errorMessage.includes('429')) {
+        userMessage = 'API rate limit exceeded. Please wait a moment before trying again.';
+      }
+      
+      setError(errorMessage);
       setQueryStatus({
         state: 'error',
-        message: 'Failed to process decomposed query'
+        message: userMessage
       });
-      onQueryResult({ error: true, message: err.message || 'Error submitting decomposed query' }); 
+      onQueryResult({ error: true, message: userMessage });
     } finally {
       setLoading(false);
     }
@@ -294,12 +305,23 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
       fetchLlmStatus();
     } catch (err) {
       console.error('Error submitting query:', err);
-      setError(err.message || 'Error submitting query');
+      
+      // Provide specific error messages for quota and rate limit issues
+      let errorMessage = err.message || 'Error submitting query';
+      let userMessage = 'Failed to get an answer';
+      
+      if (errorMessage.includes('quota exceeded') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
+        userMessage = 'API quota limit reached. Try using a local model (Ollama) instead.';
+      } else if (errorMessage.includes('rate limit') || errorMessage.includes('429')) {
+        userMessage = 'API rate limit exceeded. Please wait a moment before trying again.';
+      }
+      
+      setError(errorMessage);
       setQueryStatus({
         state: 'error',
-        message: 'Failed to get an answer'
+        message: userMessage
       });
-      onQueryResult({ error: true, message: err.message || 'Error submitting query' }); 
+      onQueryResult({ error: true, message: userMessage });
     } finally {
       setLoading(false);
     }

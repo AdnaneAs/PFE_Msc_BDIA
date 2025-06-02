@@ -167,26 +167,15 @@ SYNTHESIZED ANSWER:"""
         
         logger.info(f"Analyzing query complexity: {query[:100]}...")
         
-        try:
-            # Create decomposition prompt
+        try:            # Create decomposition prompt
             decomp_prompt = self._create_decomposition_prompt(query)
-            
-            # Use a lightweight model for decomposition if available
-            decomp_config = model_config.copy() if model_config else {}
-            if not model_config or not model_config.get('model'):
-                # Default to a fast model for decomposition
-                decomp_config = {
-                    'provider': 'ollama',
-                    'model': 'llama3.2:latest'
-                }
             
             # Get decomposition analysis
             response, model_info = get_answer_from_llm(
                 question="",  # We're using a custom prompt
                 context_documents=[],  # No context needed for decomposition
-                model_config=decomp_config,
-                custom_prompt=decomp_prompt
-            )
+                model_config=model_config,
+                custom_prompt=decomp_prompt            )
             
             logger.info(f"Decomposition analysis completed using {model_info}")
             logger.debug(f"Decomposition response: {response[:200]}...")
@@ -198,7 +187,8 @@ SYNTHESIZED ANSWER:"""
             if not queries:
                 queries = [query]
                 is_complex = False
-              # Cache the result
+            
+            # Cache the result
             result = (is_complex, queries)
             self.decomposition_cache[cache_key] = result
             
@@ -226,8 +216,7 @@ SYNTHESIZED ANSWER:"""
             search_strategy: Search strategy to use
             use_reranking: Whether to use BGE reranking
             reranker_model: BGE reranker model to use
-            
-        Returns:
+              Returns:
             dict: Sub-query results including answer, sources, and metrics
         """
         start_time = time.time()

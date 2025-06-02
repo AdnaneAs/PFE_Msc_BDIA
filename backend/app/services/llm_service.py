@@ -34,7 +34,7 @@ HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 # Default models
 DEFAULT_OLLAMA_MODEL = "llama3.2:latest"
 DEFAULT_OPENAI_MODEL = "gpt-3.5-turbo"
-DEFAULT_GEMINI_MODEL = "gemini-pro"
+DEFAULT_GEMINI_MODEL = "gemini-2.0-flash"
 DEFAULT_HUGGINGFACE_MODEL = "PleIAs/Pleias-RAG-1B"
 
 logger.info(f"LLM Service initialized. OpenAI API configured: {OPENAI_API_KEY is not None}")
@@ -450,9 +450,19 @@ Be accurate, clear, and concise in your responses."""
         llm_status["successful_queries"] += 1
         return result, f"gemini/{model}"
     except Exception as e:
-        logger.error(f"Error using Gemini: {str(e)}")
+        error_str = str(e)
+        logger.error(f"Error using Gemini: {error_str}")
         llm_status["is_processing"] = False
-        return f"Error with Gemini API: {str(e)}", f"gemini/{model} (error)"
+        
+        # Handle specific quota limit errors
+        if "429" in error_str and "RESOURCE_EXHAUSTED" in error_str:
+            logger.warning("Gemini API quota exceeded. Consider using a local model or upgrading your Gemini plan.")
+            return "Error: Gemini API quota exceeded. Please try using a local model (like Ollama) or check your Gemini API quota limits.", f"gemini/{model} (quota_exceeded)"
+        elif "429" in error_str:
+            logger.warning("Gemini API rate limit hit. Please wait before making more requests.")
+            return "Error: Gemini API rate limit exceeded. Please wait a moment before trying again.", f"gemini/{model} (rate_limited)"
+        else:
+            return f"Error with Gemini API: {error_str}", f"gemini/{model} (error)"
 
 def query_huggingface_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     """
@@ -754,26 +764,72 @@ def get_answer_from_llm(question: str, context_documents: List[str], model_confi
     if model_config and 'provider' in model_config:
         provider = model_config.get('provider')
     
-    answer = None
-    model_info = None
+    # Retry logic for API errors
+    max_retries = 2  # Will try 3 times total (initial + 2 retries)
+    retry_delay = 3  # 3 seconds delay between retries
     
-    # Query the appropriate provider
-    if provider == "openai":
-        answer, model_info = query_openai_llm(prompt, model_config)
-    elif provider == "gemini":
-        answer, model_info = query_gemini_llm(prompt, model_config)
-    elif provider == "huggingface":
-        answer, model_info = query_huggingface_llm(prompt, model_config)
-    else:  # Default to Ollama
-        answer, model_info = query_ollama_llm(prompt, model_config)
+    for attempt in range(max_retries + 1):
+        try:
+            answer = None
+            model_info = None
+            
+            # Query the appropriate provider
+            if provider == "openai":
+                answer, model_info = query_openai_llm(prompt, model_config)
+            elif provider == "gemini":
+                answer, model_info = query_gemini_llm(prompt, model_config)
+            elif provider == "huggingface":
+                answer, model_info = query_huggingface_llm(prompt, model_config)
+            else:  # Default to Ollama
+                answer, model_info = query_ollama_llm(prompt, model_config)
+            
+            # Check if we got an error response that indicates rate limiting or server issues
+            if (answer and 
+                ("quota_exceeded" in model_info or "rate_limited" in model_info or 
+                 "Error:" in answer and ("429" in answer or "503" in answer))):
+                
+                if attempt < max_retries:
+                    logger.warning(f"API error detected on attempt {attempt + 1}, retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    logger.error(f"Max retries ({max_retries}) reached, returning error response")
+                    break
+            else:
+                # Success or non-retryable error
+                break
+                
+        except Exception as e:
+            error_str = str(e)
+            logger.error(f"Exception during LLM call on attempt {attempt + 1}: {error_str}")
+            
+            # Check if it's a retryable error (rate limit, server unavailable)
+            if ("429" in error_str or "503" in error_str or "RESOURCE_EXHAUSTED" in error_str):
+                if attempt < max_retries:
+                    logger.warning(f"Retryable error detected on attempt {attempt + 1}, retrying in {retry_delay} seconds...")
+                    time.sleep(retry_delay)
+                    continue
+                else:
+                    logger.error(f"Max retries ({max_retries}) reached for retryable error")
+                    # Return the error as the answer
+                    answer = f"Error: {error_str}"
+                    model_info = f"{provider} (error_after_retries)"
+                    break
+            else:
+                # Non-retryable error, don't retry
+                logger.error(f"Non-retryable error: {error_str}")
+                answer = f"Error: {error_str}"
+                model_info = f"{provider} (error)"
+                break
     
     # Log the complete model response for better tracking
-    logger.info(f"LLM response: '{answer[:200]}...' (truncated)")
-    logger.info(f"Model info: {model_info}")
+    if answer:
+        logger.info(f"LLM response: '{answer[:200]}...' (truncated)")
+        logger.info(f"Model info: {model_info}")
     
-    # Cache the result (only for non-custom prompts)
-    if answer and cache_key:
-        query_cache[cache_key] = answer
+        # Cache the result (only for non-custom prompts and successful responses)
+        if cache_key and not answer.startswith("Error:"):
+            query_cache[cache_key] = answer
     
     return answer, model_info
 

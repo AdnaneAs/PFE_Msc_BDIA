@@ -21,9 +21,8 @@ PROVIDER_MODEL_PATTERNS = {
     "openai": {
         "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "gpt-3.5-turbo-16k"],
         "patterns": [r"^gpt-.*"]
-    },
-    "gemini": {
-        "models": ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro", "gemini-1.0-pro"],
+    },    "gemini": {
+        "models": ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro", "gemini-1.0-pro"],
         "patterns": [r"^gemini-.*"]
     },
     "huggingface": {
