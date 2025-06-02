@@ -198,10 +198,9 @@ def query_documents(
     logger.info(f"Found {len(documents)} documents matching the query")
     if len(distances) > 0:
         logger.info(f"Top result similarity score: {1.0 - distances[0]:.4f}")
-    
-    # Log source document info
+      # Log source document info
     if len(metadatas) > 0:
-        sources = [f"{m.get('filename', 'unknown')}:{m.get('chunk_index', 0)}" for m in metadatas[:3]]
+        sources = [f"{m.get('original_filename', m.get('filename', 'unknown'))}:{m.get('chunk_index', 0)}" for m in metadatas[:3]]
         logger.info(f"Top sources: {', '.join(sources)}")
     
     return {
@@ -232,17 +231,19 @@ def get_all_vectorized_documents(collection_name: str = "documents", model_name:
     documents = results.get("documents", [])
     metadatas = results.get("metadatas", [])
     ids = results.get("ids", [])
-    
-    # Combine documents with their metadata
+      # Combine documents with their metadata
     vectorized_docs = []
     seen_files = set()  # To track unique files
     
     for doc, metadata, doc_id in zip(documents, metadatas, ids):
-        filename = metadata.get("filename", "unknown")
-        if filename not in seen_files:
-            seen_files.add(filename)
+        # Use original filename for display if available, fallback to UUID filename
+        display_filename = metadata.get("original_filename", metadata.get("filename", "unknown"))
+        filename_key = metadata.get("original_filename", metadata.get("filename", "unknown"))
+        
+        if filename_key not in seen_files:
+            seen_files.add(filename_key)
             vectorized_docs.append({
-                "filename": filename,
+                "filename": display_filename,
                 "doc_id": doc_id,
                 "chunk_count": metadata.get("total_chunks", 1),
                 "uploaded_at": metadata.get("uploaded_at", ""),
@@ -409,9 +410,8 @@ def query_documents_advanced(
         results = collection.query(
             query_embeddings=[query_embedding],
             n_results=initial_n_results
-        )
-      # Apply BGE reranking if requested and available
-    if use_reranking and RERANKING_AVAILABLE and search_strategy != "hybrid":
+        )    # Apply BGE reranking if requested and available
+    if use_reranking and RERANKING_AVAILABLE:
         logger.info("Applying BGE reranking to improve result quality")
         try:
             results = rerank_search_results(
@@ -419,16 +419,13 @@ def query_documents_advanced(
                 search_results=results,
                 top_k=n_results,
                 reranker_model=reranker_model
-            )
-            # Update search strategy to indicate reranking was applied
+            )            # Update search strategy to indicate reranking was applied
             search_strategy = f"{search_strategy}_reranked"
         except Exception as e:
             logger.error(f"BGE reranking failed: {e}, using original results without reranking")
             # Continue with original results instead of failing completely
     elif use_reranking and not RERANKING_AVAILABLE:
         logger.warning("BGE reranking requested but not available, using original results")
-    elif use_reranking and search_strategy == "hybrid":
-        logger.info("BGE reranking skipped for hybrid search strategy")
     
     # Process and enhance results
     documents = results.get("documents", [[]])[0]
@@ -459,12 +456,12 @@ def query_documents_advanced(
     if relevance_scores:
         logger.info(f"Top relevance score: {max(relevance_scores):.4f}")
         logger.info(f"Average relevance: {sum(relevance_scores)/len(relevance_scores):.4f}")
-    
-    # Log top sources with relevance
+      # Log top sources with relevance
     if metadatas:
         top_sources = []
         for i, m in enumerate(metadatas[:3]):
-            filename = m.get('filename', 'unknown')
+            # Use original filename for display if available
+            filename = m.get('original_filename', m.get('filename', 'unknown'))
             chunk_idx = m.get('chunk_index', 0)
             relevance = m.get('relevance_score', 0)
             top_sources.append(f"{filename}:{chunk_idx} ({relevance:.3f})")

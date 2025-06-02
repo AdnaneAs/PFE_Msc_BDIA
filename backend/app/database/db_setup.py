@@ -163,6 +163,32 @@ async def get_all_documents() -> List[Dict[str, Any]]:
         logger.error(f"Error retrieving all documents: {str(e)}")
         return []
 
+async def check_duplicate_file(original_filename: str) -> Optional[Dict[str, Any]]:
+    """
+    Check if a file with the same original name already exists
+    
+    Args:
+        original_filename: The original filename to check
+        
+    Returns:
+        Document info if duplicate found, None otherwise
+    """
+    try:
+        async with aiosqlite.connect(DB_PATH) as db:
+            db.row_factory = aiosqlite.Row
+            cursor = await db.execute(
+                "SELECT * FROM documents WHERE original_name = ? AND status != 'failed'", 
+                (original_filename,)
+            )
+            result = await cursor.fetchone()
+            
+            if result:
+                return dict(result)
+            return None
+    except Exception as e:
+        logger.error(f"Error checking for duplicate file: {str(e)}")
+        return None
+
 async def delete_document(doc_id: int) -> bool:
     """Delete a document by its ID."""
     try:
@@ -172,4 +198,4 @@ async def delete_document(doc_id: int) -> bool:
             return True
     except Exception as e:
         logger.error(f"Error deleting document: {str(e)}")
-        return False 
+        return False

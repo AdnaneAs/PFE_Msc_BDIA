@@ -195,11 +195,16 @@ SELECT COUNT(*) FROM {table_name};"""
         current_model = get_current_model_info()
         model_name = current_model.get("name", "all-MiniLM-L6-v2")
         
+        # Get original filename from database
+        document_info = await get_document_by_id(doc_id)
+        original_filename = document_info.get("original_name", os.path.basename(file_path)) if document_info else os.path.basename(file_path)
+        
         chunk_metadatas = []
         for i, chunk in enumerate(chunks):
             metadata = {
                 "doc_id": str(doc_id),
-                "filename": os.path.basename(file_path),
+                "filename": os.path.basename(file_path),  # UUID filename for internal use
+                "original_filename": original_filename,   # Original filename for display
                 "file_type": file_type,
                 "chunk_index": i,
                 "total_chunks": len(chunks),
@@ -261,6 +266,14 @@ async def handle_document_upload(
     Returns:
         Response data including document ID and status
     """
+    # Check for duplicate file first
+    from app.database.db_setup import check_duplicate_file
+    existing_doc = await check_duplicate_file(file.filename)
+    
+    if existing_doc:
+        logger.warning(f"Duplicate file detected: {file.filename} (existing doc_id: {existing_doc['id']})")
+        raise ValueError(f"File '{file.filename}' already exists. Uploaded on {existing_doc['uploaded_at']} with status: {existing_doc['status']}")
+    
     file_path, file_type, file_size = await save_uploaded_file(file)
     
     if file_type == "unknown":
