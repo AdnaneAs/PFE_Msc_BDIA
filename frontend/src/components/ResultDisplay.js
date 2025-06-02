@@ -47,12 +47,14 @@ const ResultDisplay = ({ result }) => {
     }
     
     if (allSources.length > 0) {
-      // Group sources by filename to avoid duplicates
+      // Group sources by filename to avoid duplicates, prioritizing original_filename
       const groupedSources = allSources.reduce((acc, source) => {
-        if (!acc[source.filename]) {
-          acc[source.filename] = [];
+        // Use original_filename if available, fallback to filename
+        const displayFilename = source.original_filename || source.filename;
+        if (!acc[displayFilename]) {
+          acc[displayFilename] = [];
         }
-        acc[source.filename].push(source);
+        acc[displayFilename].push({...source, displayFilename});
         return acc;
       }, {});
       
@@ -176,7 +178,7 @@ const ResultDisplay = ({ result }) => {
           <div className="flex items-center justify-between p-4 border-b bg-gradient-to-r from-blue-50 to-indigo-50">
             <div>
               <h3 className="text-lg font-semibold text-gray-800">Source Document Content</h3>
-              <p className="text-sm text-gray-600">{selectedSource.filename}</p>
+              <p className="text-sm text-gray-600">{selectedSource.original_filename || selectedSource.filename}</p>
               <p className="text-xs text-gray-500">
                 {loadingChunks ? 'Loading chunks...' : 
                  chunkData?.chunks ? `${chunkData.chunks.length} chunks found` :
@@ -255,8 +257,8 @@ const ResultDisplay = ({ result }) => {
             <div className="flex justify-between items-center">
               <p className="text-sm text-gray-600">
                 {chunkData?.chunks ? 
-                  `Total chunks: ${chunkData.chunks.length} | File: ${selectedSource.filename}` :
-                  `Document: ${selectedSource.filename}`
+                  `Total chunks: ${chunkData.chunks.length} | File: ${selectedSource.original_filename || selectedSource.filename}` :
+                  `Document: ${selectedSource.original_filename || selectedSource.filename}`
                 }
               </p>
               <button
