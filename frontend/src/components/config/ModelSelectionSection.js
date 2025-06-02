@@ -180,7 +180,84 @@ const ModelSelectionSection = ({
               </div>
             </div>
           </div>
-        )}        {/* Ollama Model Selection */}
+        )}        {/* Model Selection for Current Provider */}
+        {llm.current_provider !== 'ollama' && llm.available_providers[llm.current_provider]?.models && llm.available_providers[llm.current_provider].models.length > 0 && (
+          <div>
+            <div className="flex items-center justify-between mb-3">
+              <label className="block text-sm font-medium text-gray-700">
+                {llm.available_providers[llm.current_provider]?.display_name} Model
+              </label>
+              <div className="flex items-center space-x-2">
+                {onRefreshModels && (
+                  <button
+                    onClick={() => !disabled && onRefreshModels()}
+                    disabled={disabled}
+                    className="px-3 py-1 text-xs font-medium text-blue-700 bg-blue-100 hover:bg-blue-200 rounded-md disabled:opacity-50 disabled:cursor-not-allowed flex items-center space-x-1"
+                    title="Refresh available models"
+                  >
+                    <svg className="w-3 h-3" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+                      <path strokeLinecap="round" strokeLinejoin="round" strokeWidth={2} d="M4 4v5h.582m15.356 2A8.001 8.001 0 004.582 9m0 0H9m11 11v-5h-.581m0 0a8.003 8.003 0 01-15.357-2m15.357 2H15" />
+                    </svg>
+                    <span>Refresh</span>
+                  </button>
+                )}
+              </div>
+            </div>
+            
+            <div>
+              <select
+                value={llm.current_model}
+                onChange={(e) => !disabled && onLLMModelChange(e.target.value)}
+                disabled={disabled}
+                className={`
+                  w-full md:w-auto min-w-[300px] px-3 py-2 border border-gray-300 rounded-md
+                  focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500
+                  ${disabled ? 'bg-gray-100 cursor-not-allowed' : 'bg-white'}
+                `}
+              >
+                {llm.available_providers[llm.current_provider].models.map((model) => (
+                  <option key={model} value={model}>
+                    {model}
+                  </option>
+                ))}
+              </select>
+              <p className="text-xs text-gray-500 mt-2">
+                Selected model: <span className="font-medium">{llm.current_model}</span>
+              </p>
+              <p className="text-xs text-green-600 mt-1">
+                ✓ {llm.available_providers[llm.current_provider].models.length} model(s) available
+                {llm.current_provider === 'huggingface' && ' (includes locally detected models)'}
+              </p>
+              
+              {/* Provider-specific tips */}
+              {llm.current_provider === 'openai' && (
+                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-xs text-blue-700">
+                    💡 <strong>Tip:</strong> GPT-4o and GPT-4o-mini offer the best performance. GPT-3.5-turbo is faster and more cost-effective for simpler tasks.
+                  </p>
+                </div>
+              )}
+              
+              {llm.current_provider === 'gemini' && (
+                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-xs text-blue-700">
+                    💡 <strong>Tip:</strong> Gemini-2.0-flash is the latest and most capable model. Gemini-1.5-flash offers good performance with lower latency.
+                  </p>
+                </div>
+              )}
+              
+              {llm.current_provider === 'huggingface' && (
+                <div className="mt-3 p-3 bg-blue-50 border border-blue-200 rounded-lg">
+                  <p className="text-xs text-blue-700">
+                    💡 <strong>Tip:</strong> Models prefixed with your username are locally cached. Format: organization/model-name (e.g., microsoft/DialoGPT-medium).
+                  </p>
+                </div>
+              )}
+            </div>
+          </div>
+        )}
+
+        {/* Ollama Model Selection */}
         {llm.current_provider === 'ollama' && (
           <div>
             <div className="flex items-center justify-between mb-3">

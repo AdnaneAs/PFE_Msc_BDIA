@@ -12,6 +12,68 @@ logger = logging.getLogger(__name__)
 # Settings file location
 SETTINGS_FILE = Path(__file__).parent.parent / "data" / "user_settings.json"
 
+def get_local_huggingface_models() -> List[str]:
+    """
+    Detect locally cached/installed Hugging Face models
+    
+    Returns:
+        List of locally available HF model names
+    """
+    local_models = []
+    
+    try:
+        # Check common HuggingFace cache directories
+        hf_cache_dirs = [
+            Path.home() / ".cache" / "huggingface" / "transformers",
+            Path.home() / ".cache" / "huggingface" / "hub", 
+            Path.home() / ".cache" / "torch" / "transformers",
+            Path(os.getenv("HF_HOME", "")) / "hub" if os.getenv("HF_HOME") else None
+        ]
+        
+        # Filter out None paths
+        hf_cache_dirs = [d for d in hf_cache_dirs if d]
+        
+        for cache_dir in hf_cache_dirs:
+            if cache_dir.exists():
+                logger.debug(f"Checking HuggingFace cache directory: {cache_dir}")
+                
+                # Look for model directories
+                for item in cache_dir.iterdir():
+                    if item.is_dir():
+                        # Try to extract model name from directory structure
+                        item_name = item.name
+                        
+                        # Handle different cache naming patterns
+                        if "models--" in item_name:
+                            # New HF cache format: models--organization--model-name
+                            model_name = item_name.replace("models--", "").replace("--", "/")
+                            if "/" in model_name and model_name not in local_models:
+                                local_models.append(model_name)
+                        elif item_name.count("_") >= 1 and "/" not in item_name:
+                            # Old format: might be organization_model-name
+                            if "_" in item_name:
+                                potential_model = item_name.replace("_", "/", 1)
+                                if potential_model not in local_models:
+                                    local_models.append(potential_model)
+        
+        # Also check for locally installed transformers models via Python
+        try:
+            import transformers
+            # We could potentially enumerate installed models here
+            # but this would require more complex detection
+        except ImportError:
+            logger.debug("Transformers library not available")
+            
+    except Exception as e:
+        logger.debug(f"Error detecting local HuggingFace models: {e}")
+    
+    # Add some commonly used local models if nothing found
+    if not local_models:
+        # These are examples that users might have locally
+        logger.debug("No local HuggingFace models detected, using examples")
+    
+    return local_models
+
 # Provider-specific model patterns for validation
 PROVIDER_MODEL_PATTERNS = {
     "ollama": {
@@ -329,12 +391,21 @@ def get_available_models_by_provider(force_refresh: bool = False) -> Dict[str, L
     
     # OpenAI - static list
     models_by_provider["openai"] = PROVIDER_MODEL_PATTERNS["openai"]["models"]
-    
-    # Gemini - static list
+      # Gemini - static list
     models_by_provider["gemini"] = PROVIDER_MODEL_PATTERNS["gemini"]["models"]
     
-    # HuggingFace - provide examples (static)
-    models_by_provider["huggingface"] = PROVIDER_MODEL_PATTERNS["huggingface"]["examples"]
+    # HuggingFace - combine examples with locally detected models
+    local_hf_models = get_local_huggingface_models()
+    hf_models = PROVIDER_MODEL_PATTERNS["huggingface"]["examples"].copy()
+    
+    # Add local models if detected
+    for local_model in local_hf_models:
+        if local_model not in hf_models:
+            hf_models.append(local_model)
+    
+    # Sort HF models for better organization
+    hf_models.sort()
+    models_by_provider["huggingface"] = hf_models
     
     # Update cache
     _models_by_provider_cache = models_by_provider
