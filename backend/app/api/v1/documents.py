@@ -38,30 +38,6 @@ def is_supported_file(filename: str) -> bool:
     """Check if the file extension is supported"""
     return any(filename.lower().endswith(f'.{ext}') for ext in SUPPORTED_EXTENSIONS.keys())
 
-async def process_csv_file(file_content: bytes, filename: str) -> str:
-    """Process CSV file and store in SQLite database"""
-    try:
-        # Read CSV content
-        df = pd.read_csv(io.BytesIO(file_content))
-        
-        # Create a table name from the filename
-        table_name = f"csv_{filename.replace('.', '_').replace('-', '_')}"
-        
-        # Store in SQLite database
-        conn = await init_db()
-        df.to_sql(table_name, conn, if_exists='replace', index=False)
-        
-        # Generate a text representation for vector storage
-        text_content = f"CSV File: {filename}\n\n"
-        text_content += "Columns:\n"
-        text_content += "\n".join(f"- {col}" for col in df.columns)
-        text_content += "\n\nSample Data:\n"
-        text_content += df.head().to_string()
-        
-        return text_content
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error processing CSV file: {str(e)}")
-
 async def process_text_file(file_content: bytes) -> str:
     """Process text file content"""
     try:
@@ -105,10 +81,17 @@ async def upload_document(
     response_model=DocumentList,
     summary="Get all documents"
 )
-async def get_documents():
+async def get_documents(
+    model_name: Optional[str] = Query(None, description="Filter documents by embedding model"),
+    vectorized_only: bool = Query(False, description="Show only vectorized documents")
+):
     """
     Retrieve a list of all documents and their processing status.
     This includes both documents in the SQLite database and documents in the vector database.
+    
+    Args:
+        model_name: Filter documents by specific embedding model
+        vectorized_only: If True, show only documents that are vectorized
     
     Returns metadata for all documents in the system, ordered by upload time (newest first).
     """
@@ -131,9 +114,9 @@ async def get_documents():
                 chunk_count=doc_data.get("chunk_count"),
                 error_message=doc_data.get("error_message")
             ))
-        
-        # Get documents from vector database
-        vector_documents = get_all_vectorized_documents()
+
+        # Get documents from vector database (filtered by model if specified)
+        vector_documents = get_all_vectorized_documents(model_name=model_name)
         
         # Create a set of filenames from vector database for quick lookup
         vector_filenames = {doc["filename"] for doc in vector_documents}
@@ -142,6 +125,15 @@ async def get_documents():
         for doc in sqlite_documents:
             if doc.filename in vector_filenames:
                 doc.status = "vectorized"
+                # Update chunk count from vector database if available
+                for vec_doc in vector_documents:
+                    if vec_doc["filename"] == doc.filename:
+                        doc.chunk_count = vec_doc.get("chunk_count", doc.chunk_count)
+                        break
+
+        # If vectorized_only is True, filter out non-vectorized documents
+        if vectorized_only:
+            sqlite_documents = [doc for doc in sqlite_documents if doc.status == "vectorized"]
         
         # Add any documents that are only in vector database
         for vec_doc in vector_documents:
@@ -161,10 +153,79 @@ async def get_documents():
                     uploaded_at=vec_doc.get("uploaded_at", ""),
                     chunk_count=vec_doc.get("chunk_count", 0)
                 ))
-        
+
         return DocumentList(documents=sqlite_documents)
     except Exception as e:
         raise HTTPException(status_code=500, detail=f"Error retrieving documents: {str(e)}")
+
+@router.get(
+    "/vectorization-status",
+    summary="Get documents with vectorization status across all models"
+)
+async def get_documents_vectorization_status():
+    """
+    Get all documents with their vectorization status across all available embedding models.
+    
+    Returns:
+        Dict with documents and their status per embedding model
+    """
+    try:
+        from app.config import AVAILABLE_EMBEDDING_MODELS
+        
+        # Get all SQLite documents
+        sqlite_documents_data = await get_all_documents()
+        
+        # Initialize result structure
+        result = {
+            "documents": [],
+            "available_models": list(AVAILABLE_EMBEDDING_MODELS.keys())
+        }
+        
+        # For each document, check its status in each model
+        for doc_data in sqlite_documents_data:
+            doc_status = {
+                "id": doc_data["id"],
+                "filename": doc_data["filename"],
+                "original_name": doc_data["original_name"],
+                "uploaded_at": doc_data["uploaded_at"],
+                "models": {}
+            }
+            
+            # Check vectorization status for each available model
+            for model_name in AVAILABLE_EMBEDDING_MODELS.keys():
+                try:
+                    vector_docs = get_all_vectorized_documents(model_name=model_name)
+                    is_vectorized = any(vec_doc["filename"] == doc_data["filename"] for vec_doc in vector_docs)
+                    
+                    if is_vectorized:
+                        # Get chunk count for this model
+                        chunk_count = 0
+                        for vec_doc in vector_docs:
+                            if vec_doc["filename"] == doc_data["filename"]:
+                                chunk_count = vec_doc.get("chunk_count", 0)
+                                break
+                        
+                        doc_status["models"][model_name] = {
+                            "status": "vectorized",
+                            "chunk_count": chunk_count
+                        }
+                    else:
+                        doc_status["models"][model_name] = {
+                            "status": "not_vectorized",
+                            "chunk_count": 0
+                        }
+                except Exception as e:
+                    logger.warning(f"Error checking model {model_name} for document {doc_data['filename']}: {e}")
+                    doc_status["models"][model_name] = {
+                        "status": "error",
+                        "chunk_count": 0
+                    }
+            
+            result["documents"].append(doc_status)
+        
+        return result
+    except Exception as e:
+        raise HTTPException(status_code=500, detail=f"Error retrieving vectorization status: {str(e)}")
 
 @router.get(
     "/{document_id}", 
@@ -255,95 +316,7 @@ async def remove_document(
         logger.error(f"Error deleting document: {str(e)}")
         raise HTTPException(status_code=500, detail=f"Error deleting document: {str(e)}")
 
-@router.post(
-    "/upload/async",
-    status_code=status.HTTP_202_ACCEPTED,
-    summary="Upload and process a document asynchronously"
-)
-async def upload_document_async(
-    file: UploadFile = File(...),
-    background_tasks: BackgroundTasks = BackgroundTasks()
-):
-    """
-    Upload a document and process it asynchronously in the background.
-    Supports PDF, DOCX, DOC, TXT, and CSV files.
-    """
-    if not is_supported_file(file.filename):
-        supported_types = ", ".join(SUPPORTED_EXTENSIONS.keys())
-        raise HTTPException(
-            status_code=400, 
-            detail=f"Unsupported file type. Supported types are: {supported_types}"
-        )
-    
-    try:
-        # Generate a unique ID for this document
-        doc_id = f"{file.filename}-{uuid.uuid4()}"
-        
-        # Read file content once
-        file_content = await file.read()
-        
-        # Define the callback function for when parsing is complete
-        async def process_parsed_content(content: str):
-            try:
-                # Chunk the text
-                chunks = chunk_text(content)
-                if not chunks:
-                    print(f"Failed to extract chunks from {file.filename}")
-                    return
-                
-                # Generate embeddings for each chunk
-                chunk_embeddings = generate_embeddings(chunks)
-                
-                # Create metadata for each chunk
-                metadatas = [{
-                    "filename": file.filename,
-                    "chunk_index": i,
-                    "total_chunks": len(chunks),
-                    "doc_id": doc_id,
-                    "file_type": file.filename.split('.')[-1].lower()
-                } for i in range(len(chunks))]
-                
-                # Add documents to ChromaDB
-                add_documents(
-                    texts=chunks,
-                    embeddings=chunk_embeddings,
-                    metadatas=metadatas
-                )
-                
-                print(f"Successfully processed {file.filename} with {len(chunks)} chunks")
-            except Exception as e:
-                print(f"Error in background processing: {str(e)}")
-        
-        # Process file based on type
-        file_ext = file.filename.split('.')[-1].lower()
-        
-        if file_ext == 'csv':
-            # Process CSV file
-            content = await process_csv_file(file_content, file.filename)
-            await process_parsed_content(content)
-        elif file_ext == 'txt':
-            # Process text file
-            content = await process_text_file(file_content)
-            await process_parsed_content(content)
-        else:
-            # Process PDF/DOCX/DOC using LlamaParse
-            background_tasks.add_task(
-                process_pdf_in_background,
-                file_content,
-                file.filename,
-                process_parsed_content,
-                doc_id
-            )
-        
-        return {
-            "filename": file.filename,
-            "status": "accepted",
-            "message": "Document processing started in the background",
-            "doc_id": doc_id
-        }
-        
-    except Exception as e:
-        raise HTTPException(status_code=500, detail=f"Error starting document processing: {str(e)}")
+# Removed the broken async upload endpoint - using the main upload endpoint instead
 
 @router.get(
     "/status/{doc_id}",

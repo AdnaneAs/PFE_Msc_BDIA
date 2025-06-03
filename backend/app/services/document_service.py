@@ -4,7 +4,7 @@ import tempfile
 import uuid
 import shutil
 import time
-import sqlite3
+import aiosqlite
 import pandas as pd
 from datetime import datetime
 from fastapi import UploadFile, BackgroundTasks
@@ -21,9 +21,6 @@ from app.services.vector_db_service import add_documents
 from app.services.llamaparse_service import parse_document, parse_document_with_images
 from app.services.image_processing_service import process_document_images, generate_image_descriptions, prepare_image_chunks_for_vectorization
 from app.services.vector_db_service import add_image_documents
-
-# For CSV/Excel parsing
-import pandas as pd
 
 # Configure logging
 logger = logging.getLogger(__name__)
@@ -127,9 +124,34 @@ async def process_document(
                 
                 # Create SQLite table
                 table_name = f"csv_{doc_id}_{int(time.time())}"
-                conn = sqlite3.connect("data/documents.db")
-                df.to_sql(table_name, conn, if_exists='replace', index=False)
-                conn.close()
+                from app.database.db_setup import DB_PATH
+                import aiosqlite
+                
+                async with aiosqlite.connect(DB_PATH) as conn:
+                    # Create table with proper column types
+                    columns_sql = []
+                    for col in df.columns:
+                        col_type = "TEXT"  # Default to TEXT for simplicity
+                        if df[col].dtype in ['int64', 'float64']:
+                            col_type = "NUMERIC"
+                        columns_sql.append(f'"{col}" {col_type}')
+                    
+                    create_table_sql = f"""
+                    CREATE TABLE IF NOT EXISTS "{table_name}" (
+                        {', '.join(columns_sql)}
+                    )
+                    """
+                    
+                    await conn.execute(create_table_sql)
+                    
+                    # Insert data row by row
+                    placeholders = ', '.join(['?' for _ in df.columns])
+                    insert_sql = f'INSERT INTO "{table_name}" VALUES ({placeholders})'
+                    
+                    for _, row in df.iterrows():
+                        await conn.execute(insert_sql, tuple(row.values))
+                    
+                    await conn.commit()
                 
                 logger.info(f"CSV data stored in SQLite table: {table_name}")
                 logger.info(f"Table contains {len(df)} rows and {len(df.columns)} columns")
@@ -153,6 +175,7 @@ SELECT COUNT(*) FROM {table_name};"""
                 logger.info(f"Sample of metadata content: {metadata_content[:200]}...")
                 
                 parsed_content = metadata_content
+                image_paths = []  # CSV files don't have images
                 
             except Exception as e:
                 await update_document_status(

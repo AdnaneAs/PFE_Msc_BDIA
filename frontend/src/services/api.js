@@ -491,9 +491,23 @@ export const fetchStreamingQuery = async (question) => {
  * @returns {Promise<Array>} List of document objects
  * @throws {Error} If the API call fails
  */
-export const getDocuments = async () => {
+export const getDocuments = async (modelName = null, vectorizedOnly = false) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/documents`);
+    let url = `${API_BASE_URL}/api/v1/documents`;
+    const params = new URLSearchParams();
+    
+    if (modelName) {
+      params.append('model_name', modelName);
+    }
+    if (vectorizedOnly) {
+      params.append('vectorized_only', 'true');
+    }
+    
+    if (params.toString()) {
+      url += `?${params.toString()}`;
+    }
+    
+    const response = await fetch(url);
     if (!response.ok) {
       throw new Error('Failed to fetch documents');
     }
@@ -1306,6 +1320,24 @@ export const updateVLMModel = async (model) => {
     return await handleApiResponse(response);
   } catch (error) {
     console.error('Failed to update VLM model:', error);
+    throw error;
+  }
+};
+
+/**
+ * Gets vectorization status across all models for all documents
+ * @returns {Promise<Object>} Documents with their vectorization status per model
+ * @throws {Error} If the API call fails
+ */
+export const getDocumentsVectorizationStatus = async () => {
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents/vectorization-status`);
+    if (!response.ok) {
+      throw new Error('Failed to fetch vectorization status');
+    }
+    return await response.json();
+  } catch (error) {
+    console.error('Error fetching vectorization status:', error);
     throw error;
   }
 };

@@ -1,6 +1,6 @@
 import React, { useState, useEffect, useCallback } from 'react';
-import { getDocuments, deleteDocument } from '../services/api';
-import { FiFileText, FiTrash2, FiRefreshCw, FiAlertCircle, FiClock, FiCheckCircle, FiX, FiDatabase, FiChevronDown, FiChevronRight, FiImage, FiSearch, FiChevronLeft } from 'react-icons/fi';
+import { getDocuments, deleteDocument, getDocumentsVectorizationStatus, getSystemConfiguration } from '../services/api';
+import { FiFileText, FiTrash2, FiRefreshCw, FiAlertCircle, FiClock, FiCheckCircle, FiX, FiDatabase, FiChevronDown, FiChevronRight, FiImage, FiSearch, FiChevronLeft, FiFilter, FiLayers } from 'react-icons/fi';
 import DocumentImages from './DocumentImages';
 
 const DocumentList = ({ refreshTrigger }) => {
@@ -17,13 +17,34 @@ const DocumentList = ({ refreshTrigger }) => {
   const [documentsPerPage] = useState(10);
   const [sortBy, setSortBy] = useState('uploaded_at');
   const [sortOrder, setSortOrder] = useState('desc');
+  
+  // Model filtering state
+  const [selectedModel, setSelectedModel] = useState('all');
+  const [vectorizedOnly, setVectorizedOnly] = useState(false);
+  const [availableModels, setAvailableModels] = useState([]);
+  const [showMultiModelView, setShowMultiModelView] = useState(false);
+  const [multiModelData, setMultiModelData] = useState(null);
+  const [loadingMultiModel, setLoadingMultiModel] = useState(false);
+
+  // Fetch available models
+  const fetchAvailableModels = useCallback(async () => {
+    try {
+      const config = await getSystemConfiguration();
+      const embeddingModels = config?.embedding?.available_models || {};
+      setAvailableModels(Object.keys(embeddingModels));
+    } catch (err) {
+      console.error('Error fetching available models:', err);
+    }
+  }, []);
 
   // Fetch documents on component mount or when refresh is triggered
   const fetchDocuments = useCallback(async () => {
     try {
       setLoading(true);
       setError(null);
-      const documentsList = await getDocuments();
+      
+      const modelParam = selectedModel === 'all' ? null : selectedModel;
+      const documentsList = await getDocuments(modelParam, vectorizedOnly);
       setDocuments(documentsList);
     } catch (err) {
       console.error('Error fetching documents:', err);
@@ -31,12 +52,33 @@ const DocumentList = ({ refreshTrigger }) => {
     } finally {
       setLoading(false);
     }
+  }, [selectedModel, vectorizedOnly]);
+
+  // Fetch multi-model vectorization status
+  const fetchMultiModelData = useCallback(async () => {
+    try {
+      setLoadingMultiModel(true);
+      const data = await getDocumentsVectorizationStatus();
+      setMultiModelData(data);
+    } catch (err) {
+      console.error('Error fetching multi-model data:', err);
+    } finally {
+      setLoadingMultiModel(false);
+    }
   }, []);
 
-  // Load documents on mount and when refreshTrigger changes
+  // Load documents and models on mount and when refreshTrigger changes
   useEffect(() => {
+    fetchAvailableModels();
     fetchDocuments();
-  }, [fetchDocuments, refreshTrigger]);
+  }, [fetchAvailableModels, fetchDocuments, refreshTrigger]);
+
+  // Refresh documents when filter options change
+  useEffect(() => {
+    if (availableModels.length > 0) {
+      fetchDocuments();
+    }
+  }, [selectedModel, vectorizedOnly, fetchDocuments]);
 
   // Toggle document expansion
   const toggleDocumentExpansion = (documentId) => {
@@ -157,10 +199,15 @@ const DocumentList = ({ refreshTrigger }) => {
         <span className={`inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium ${bgColor} ${textColor}`}>
           {icon}
           {label}
+          {selectedModel !== 'all' && selectedModel && (
+            <span className="ml-1 text-xs opacity-75">
+              ({selectedModel.split('_').slice(-2).join('-')})
+            </span>
+          )}
         </span>
         {chunkCount > 0 && (
-          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap">
-            {chunkCount} chunks in vector DB
+          <div className="absolute bottom-full left-1/2 transform -translate-x-1/2 mb-2 px-2 py-1 bg-gray-800 text-white text-xs rounded opacity-0 group-hover:opacity-100 transition-opacity duration-200 whitespace-nowrap z-10">
+            {chunkCount} chunks in {selectedModel !== 'all' && selectedModel ? selectedModel : 'vector DB'}
           </div>
         )}
       </div>
@@ -236,16 +283,26 @@ const DocumentList = ({ refreshTrigger }) => {
 
   return (
     <div className="bg-white shadow-md rounded-lg p-6 mb-6">
-      <div className="flex justify-between items-center mb-6">
-        <h2 className="text-xl font-semibold text-gray-800">Documents</h2>
-        <button
-          onClick={fetchDocuments}
-          className="flex items-center px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md text-gray-700"
-          disabled={loading}
-        >
-          <FiRefreshCw className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
-          Refresh
-        </button>
+      <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-6 space-y-3 sm:space-y-0">
+        <div>
+          <h2 className="text-xl font-semibold text-gray-800">Documents</h2>
+          {(selectedModel !== 'all' || vectorizedOnly) && (
+            <p className="text-sm text-gray-600 mt-1">
+              Filtered by: {selectedModel !== 'all' ? `${selectedModel.replace(/_/g, ' ')} model` : 'All models'}
+              {vectorizedOnly && ' (vectorized only)'}
+            </p>
+          )}
+        </div>
+        <div className="flex items-center space-x-2">
+          <button
+            onClick={fetchDocuments}
+            className="flex items-center px-3 py-1.5 text-sm bg-gray-100 hover:bg-gray-200 rounded-md text-gray-700"
+            disabled={loading}
+          >
+            <FiRefreshCw className={`mr-2 ${loading ? 'animate-spin' : ''}`} />
+            Refresh
+          </button>
+        </div>
       </div>
 
       {/* Search and Filter Controls */}
@@ -272,6 +329,88 @@ const DocumentList = ({ refreshTrigger }) => {
           )}
         </div>
 
+        {/* Model Filter and View Options */}
+        <div className="flex flex-col sm:flex-row gap-4 items-start sm:items-center">
+          {/* Model Selection */}
+          <div className="flex items-center space-x-3">
+            <FiFilter className="h-4 w-4 text-gray-500" />
+            <label className="text-sm font-medium text-gray-700">Model:</label>
+            <select
+              value={selectedModel}
+              onChange={(e) => setSelectedModel(e.target.value)}
+              className="border border-gray-300 rounded-md px-3 py-1.5 text-sm focus:outline-none focus:ring-2 focus:ring-blue-500 focus:border-blue-500"
+            >
+              <option value="all">All Models</option>
+              {availableModels.map(model => (
+                <option key={model} value={model}>
+                  {model.replace(/_/g, ' ').replace(/\b\w/g, l => l.toUpperCase())}
+                </option>
+              ))}
+            </select>
+          </div>
+
+          {/* Vectorized Only Filter */}
+          <div className="flex items-center space-x-2">
+            <input
+              type="checkbox"
+              id="vectorized-only"
+              checked={vectorizedOnly}
+              onChange={(e) => setVectorizedOnly(e.target.checked)}
+              className="h-4 w-4 text-blue-600 focus:ring-blue-500 border-gray-300 rounded"
+            />
+            <label htmlFor="vectorized-only" className="text-sm text-gray-700">
+              Vectorized only
+            </label>
+          </div>
+
+          {/* Multi-Model View Toggle */}
+          <button
+            onClick={() => {
+              setShowMultiModelView(!showMultiModelView);
+              if (!showMultiModelView && !multiModelData) {
+                fetchMultiModelData();
+              }
+            }}
+            className={`flex items-center space-x-2 px-3 py-1.5 text-sm rounded-md border transition-colors ${
+              showMultiModelView 
+                ? 'bg-blue-100 border-blue-300 text-blue-700' 
+                : 'bg-gray-50 border-gray-300 text-gray-700 hover:bg-gray-100'
+            }`}
+          >
+            <FiLayers className="h-4 w-4" />
+            <span>Multi-Model View</span>
+          </button>
+        </div>
+
+        {/* Active Filters Display */}
+        {(selectedModel !== 'all' || vectorizedOnly) && (
+          <div className="flex items-center space-x-2 text-sm">
+            <span className="text-gray-500">Active filters:</span>
+            {selectedModel !== 'all' && (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-blue-100 text-blue-800">
+                Model: {selectedModel.replace(/_/g, ' ')}
+                <button
+                  onClick={() => setSelectedModel('all')}
+                  className="ml-1 hover:text-blue-600"
+                >
+                  <FiX className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+            {vectorizedOnly && (
+              <span className="inline-flex items-center px-2.5 py-0.5 rounded-full text-xs font-medium bg-purple-100 text-purple-800">
+                Vectorized only
+                <button
+                  onClick={() => setVectorizedOnly(false)}
+                  className="ml-1 hover:text-purple-600"
+                >
+                  <FiX className="h-3 w-3" />
+                </button>
+              </span>
+            )}
+          </div>
+        )}
+
         {/* Results Summary and Sort Controls */}
         {!loading && (
           <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center space-y-2 sm:space-y-0">
@@ -286,7 +425,15 @@ const DocumentList = ({ refreshTrigger }) => {
                   )}
                 </>
               ) : (
-                `Showing ${documents.length} document${documents.length !== 1 ? 's' : ''}`
+                <>
+                  Showing {documents.length} document{documents.length !== 1 ? 's' : ''}
+                  {(selectedModel !== 'all' || vectorizedOnly) && (
+                    <span className="ml-2 text-purple-600">
+                      ({selectedModel !== 'all' ? `${selectedModel.replace(/_/g, ' ')} model` : 'all models'}
+                      {vectorizedOnly ? ', vectorized only' : ''})
+                    </span>
+                  )}
+                </>
               )}
             </div>
             
@@ -360,10 +507,29 @@ const DocumentList = ({ refreshTrigger }) => {
       {!loading && documents.length === 0 && (
         <div className="text-center p-8 bg-gray-50 rounded-lg border border-gray-100">
           <FiFileText size={48} className="mx-auto text-gray-400 mb-4" />
-          <p className="text-gray-600 mb-2">No documents uploaded yet</p>
-          <p className="text-gray-500 text-sm">
-            Upload a document to see it listed here
+          <p className="text-gray-600 mb-2">
+            {(selectedModel !== 'all' || vectorizedOnly) 
+              ? `No documents found with current filters`
+              : 'No documents uploaded yet'
+            }
           </p>
+          <p className="text-gray-500 text-sm">
+            {(selectedModel !== 'all' || vectorizedOnly) 
+              ? 'Try adjusting your filter settings or uploading documents to this model'
+              : 'Upload a document to see it listed here'
+            }
+          </p>
+          {(selectedModel !== 'all' || vectorizedOnly) && (
+            <button
+              onClick={() => {
+                setSelectedModel('all');
+                setVectorizedOnly(false);
+              }}
+              className="mt-3 px-4 py-2 bg-blue-600 text-white rounded-md hover:bg-blue-700 text-sm"
+            >
+              Clear Filters
+            </button>
+          )}
         </div>
       )}
 
@@ -578,6 +744,99 @@ const DocumentList = ({ refreshTrigger }) => {
             </div>
           )}
         </>
+      )}
+
+      {/* Multi-Model View */}
+      {showMultiModelView && (
+        <div className="mb-6 border border-gray-200 rounded-lg overflow-hidden">
+          <div className="bg-gray-50 px-4 py-3 border-b border-gray-200">
+            <div className="flex items-center justify-between">
+              <h3 className="text-lg font-medium text-gray-900">Multi-Model Vectorization Status</h3>
+              <button
+                onClick={fetchMultiModelData}
+                disabled={loadingMultiModel}
+                className="flex items-center px-3 py-1.5 text-sm bg-white border border-gray-300 rounded-md hover:bg-gray-50 disabled:opacity-50"
+              >
+                <FiRefreshCw className={`mr-2 h-4 w-4 ${loadingMultiModel ? 'animate-spin' : ''}`} />
+                Refresh
+              </button>
+            </div>
+          </div>
+          
+          {loadingMultiModel ? (
+            <div className="p-8 text-center">
+              <FiRefreshCw className="animate-spin mx-auto h-8 w-8 text-blue-500 mb-2" />
+              <p className="text-gray-500">Loading multi-model data...</p>
+            </div>
+          ) : multiModelData ? (
+            <div className="overflow-x-auto">
+              <table className="min-w-full divide-y divide-gray-200">
+                <thead className="bg-gray-50">
+                  <tr>
+                    <th className="px-6 py-3 text-left text-xs font-medium text-gray-500 uppercase tracking-wider">
+                      Document
+                    </th>
+                    {multiModelData.available_models.map(model => (
+                      <th key={model} className="px-6 py-3 text-center text-xs font-medium text-gray-500 uppercase tracking-wider">
+                        <div className="flex flex-col items-center">
+                          <span>{model.replace(/_/g, ' ')}</span>
+                          <span className="text-xs text-gray-400 normal-case">chunks</span>
+                        </div>
+                      </th>
+                    ))}
+                  </tr>
+                </thead>
+                <tbody className="bg-white divide-y divide-gray-200">
+                  {multiModelData.documents.map((doc) => (
+                    <tr key={doc.id} className="hover:bg-gray-50">
+                      <td className="px-6 py-4 whitespace-nowrap">
+                        <div className="flex items-center">
+                          <FiFileText className="h-5 w-5 text-gray-400 mr-3" />
+                          <div>
+                            <div className="text-sm font-medium text-gray-900">
+                              {doc.original_name}
+                            </div>
+                            <div className="text-xs text-gray-500">
+                              {formatDate(doc.uploaded_at)}
+                            </div>
+                          </div>
+                        </div>
+                      </td>
+                      {multiModelData.available_models.map(model => {
+                        const modelStatus = doc.models[model];
+                        return (
+                          <td key={model} className="px-6 py-4 whitespace-nowrap text-center">
+                            {modelStatus.status === 'vectorized' ? (
+                              <div className="flex flex-col items-center">
+                                <FiCheckCircle className="h-5 w-5 text-green-500 mb-1" />
+                                <span className="text-xs text-green-600 font-medium">
+                                  {modelStatus.chunk_count}
+                                </span>
+                              </div>
+                            ) : modelStatus.status === 'error' ? (
+                              <FiAlertCircle className="h-5 w-5 text-red-500" />
+                            ) : (
+                              <FiX className="h-5 w-5 text-gray-300" />
+                            )}
+                          </td>
+                        );
+                      })}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+              {multiModelData.documents.length === 0 && (
+                <div className="p-8 text-center text-gray-500">
+                  No documents found
+                </div>
+              )}
+            </div>
+          ) : (
+            <div className="p-8 text-center text-gray-500">
+              Click refresh to load multi-model data
+            </div>
+          )}
+        </div>
       )}
     </div>
   );

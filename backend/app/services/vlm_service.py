@@ -13,7 +13,7 @@ logger = logging.getLogger(__name__)
 
 # API Keys and endpoints
 OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
-OLLAMA_ENDPOINT = os.getenv("OLLAMA_ENDPOINT", "http://localhost:11434/api/generate")
+OLLAMA_VLM_ENDPOINT = os.getenv("OLLAMA_VLM_ENDPOINT", "http://localhost:11434/api/chat")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
 HUGGINGFACE_API_KEY = os.getenv("HUGGINGFACE_API_KEY")
 
@@ -67,15 +67,27 @@ def describe_image(image_path: str, model_config: Dict[str, Any] = None) -> Tupl
     
     # Validate image first
     if not validate_image(image_path):
-        return f"Error: Invalid or missing image at {image_path}", "error"
-    
-    # Determine provider and model
-    provider = "ollama"  # Default
+        return f"Error: Invalid or missing image at {image_path}", "error"    # Determine provider and model with validation
+    provider = "ollama"
     model = DEFAULT_OLLAMA_VLM
     
     if model_config:
-        provider = model_config.get('provider', provider)
-        model = model_config.get('model', model)
+        config_provider = model_config.get('provider', provider)
+        config_model = model_config.get('model', model)
+        
+        # Validate provider
+        if config_provider in ["ollama", "openai", "gemini", "huggingface"]:
+            provider = config_provider
+            
+        # For ollama, validate model exists
+        if provider == "ollama":
+            # Simple validation - if model contains "llava", use it
+            if config_model and "llava" in config_model.lower():
+                model = config_model
+            # Otherwise use default
+        else:
+            # For other providers, use the config model
+            model = config_model
     
     # Update status
     vlm_status["is_processing"] = True
@@ -136,16 +148,26 @@ def query_ollama_vlm(image_path: str, model: str) -> Tuple[str, str]:
         
         payload = {
             "model": model,
-            "prompt": "Describe this image in detail. Focus on the main content, objects, text, and any important visual elements.",
-            "images": [base64_image],
+            "messages": [
+                {
+                    "role": "user",
+                    "content": "Describe this image in detail. Focus on the main content, objects, text, and any important visual elements.",
+                    "images": [base64_image]
+                }
+            ],
             "stream": False
         }
         
-        response = requests.post(OLLAMA_ENDPOINT, json=payload, timeout=60)
+        response = requests.post(OLLAMA_VLM_ENDPOINT, json=payload, timeout=60)
         response.raise_for_status()
         
         result = response.json()
-        description = result.get("response", "No description generated")
+        # For chat API, the response is in message.content
+        if "message" in result and "content" in result["message"]:
+            description = result["message"]["content"]
+        else:
+            # Fallback for older format
+            description = result.get("response", "No description generated")
         
         logger.info(f"Ollama VLM description generated: {description[:100]}...")
         return description, f"ollama/{model}"
