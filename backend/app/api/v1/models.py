@@ -12,7 +12,7 @@ from app.services.embedding_service import (
 # Configure logging
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/models", tags=["embedding-models"])
+router = APIRouter(tags=["embedding-models"])
 
 @router.get(
     "/embedding/available",

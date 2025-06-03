@@ -1,5 +1,12 @@
 import React, { useState, useEffect } from 'react';
-import { submitQuery, submitDecomposedQuery, getLLMStatus, getSystemConfiguration, getRerankerConfig } from '../services/api';
+import { 
+  submitQuery, 
+  submitDecomposedQuery, 
+  submitMultimodalQuery,
+  getLLMStatus, 
+  getSystemConfiguration, 
+  getRerankerConfig 
+} from '../services/api';
 
 const QueryInput = ({ onQueryResult, configChangeCounter }) => {
   const [question, setQuestion] = useState('');
@@ -22,6 +29,12 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
   const [rerankerModel, setRerankerModel] = useState('BAAI/bge-reranker-base');
   const [rerankerConfig, setRerankerConfig] = useState(null);
   const [showRerankerDetails, setShowRerankerDetails] = useState(false);
+  
+  // Multimodal query states - v0.3 enhancement
+  const [useMultimodal, setUseMultimodal] = useState(false);
+  const [textWeight, setTextWeight] = useState(0.7);
+  const [imageWeight, setImageWeight] = useState(0.3);
+  const [showMultimodalSettings, setShowMultimodalSettings] = useState(false);
   
   // Configuration state
   const [currentConfig, setCurrentConfig] = useState(null);
@@ -327,8 +340,90 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
     }
   };
 
+  const handleSubmitMultimodal = async (e, isRetry = false) => {
+    if (e) e.preventDefault();
+    
+    if (!question.trim()) {
+      setError('Please enter a question');
+      return;
+    }
+    
+    if (!isRetry) {
+      setLoading(true);
+      setError(null);
+    }
+    
+    // Update status to show multimodal search steps
+    setQueryStatus({
+      state: 'searching',
+      message: 'Performing multimodal search (text + images)...'
+    });
+    
+    try {
+      // Get current model configuration
+      const modelConfig = getCurrentModelConfig();
+      
+      // Send the multimodal query to the backend
+      const result = await submitMultimodalQuery(
+        question, 
+        modelConfig, 
+        maxSources,
+        textWeight, 
+        imageWeight,
+        searchStrategy,
+        true, // includeImages = true
+        useReranking,
+        rerankerModel
+      );
+      
+      // Update status
+      setQueryStatus({
+        state: 'success',
+        message: 'Multimodal answer generated successfully!',
+        queryTime: result.query_time_ms
+      });
+      
+      console.log("Multimodal query complete. Result:", result);
+      
+      if (result) {
+        onQueryResult({
+          ...result,
+          multimodal: true // Flag to indicate this was a multimodal query
+        });
+      } else {
+        onQueryResult({ error: true, message: 'No result returned from backend.' });
+      }
+      
+      // Fetch updated LLM status after query completion
+      fetchLlmStatus();
+    } catch (err) {
+      console.error('Error submitting multimodal query:', err);
+      
+      // Provide specific error messages for quota and rate limit issues
+      let errorMessage = err.message || 'Error submitting multimodal query';
+      let userMessage = 'Failed to process multimodal query';
+      
+      if (errorMessage.includes('quota exceeded') || errorMessage.includes('RESOURCE_EXHAUSTED')) {
+        userMessage = 'API quota limit reached. Try using a local model (Ollama) instead.';
+      } else if (errorMessage.includes('rate limit') || errorMessage.includes('429')) {
+        userMessage = 'API rate limit exceeded. Please wait a moment before trying again.';
+      }
+      
+      setError(errorMessage);
+      setQueryStatus({
+        state: 'error',
+        message: userMessage
+      });
+      onQueryResult({ error: true, message: userMessage });
+    } finally {
+      setLoading(false);
+    }
+  };
+
   const handleSubmit = (e) => {
-    if (useDecomposition) {
+    if (useMultimodal) {
+      handleSubmitMultimodal(e);
+    } else if (useDecomposition) {
       handleSubmitDecomposed(e);
     } else {
       handleSubmitNormal(e);
@@ -353,7 +448,7 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
             <h3 className="text-sm font-medium text-gray-700">Current Configuration</h3>
             <div className="text-xs text-gray-500">Use the settings gear ⚙️ to modify</div>
           </div>
-          <div className="grid grid-cols-1 md:grid-cols-4 gap-4 text-sm">
+          <div className="grid grid-cols-1 md:grid-cols-5 gap-4 text-sm">
             <div>
               <span className="text-gray-600">Model:</span>{' '}
               <span className="font-medium text-gray-800">
@@ -381,6 +476,17 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
                 <div className="text-xs text-orange-500 mt-1">+23.86% MAP improvement</div>
               )}
             </div>
+            <div>
+              <span className="text-gray-600">Multimodal:</span>{' '}
+              <span className={`font-medium ${useMultimodal ? 'text-purple-600' : 'text-gray-500'}`}>
+                {useMultimodal ? '✓ v0.3 Enabled' : '✗ Disabled'}
+              </span>
+              {useMultimodal && (
+                <div className="text-xs text-purple-500 mt-1">
+                  Text: {Math.round(textWeight * 100)}% | Images: {Math.round(imageWeight * 100)}%
+                </div>
+              )}
+            </div>
           </div>
         </div>
       )}
@@ -398,6 +504,91 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
             placeholder="e.g., What are the key findings in the audit report?"
             className="w-full px-4 py-2 border border-gray-300 rounded-md focus:outline-none focus:ring-2 focus:ring-blue-500"
           />
+        </div>
+        
+        {/* Multimodal Configuration Section - v0.3 */}
+        <div className="mb-4 p-4 bg-purple-50 border border-purple-200 rounded-lg">
+          <div className="flex items-center justify-between mb-3">
+            <div className="flex items-center">
+              <label className="flex items-center">
+                <input
+                  type="checkbox"
+                  checked={useMultimodal}
+                  onChange={(e) => setUseMultimodal(e.target.checked)}
+                  className="mr-2"
+                />
+                <span className="text-sm font-medium text-purple-800">
+                  🔮 Enable Multimodal Search (v0.3)
+                </span>
+              </label>
+              <span className="text-xs text-purple-600 ml-2 px-2 py-1 bg-purple-100 rounded-full">
+                VLM + Images
+              </span>
+            </div>
+            
+            {useMultimodal && (
+              <button
+                type="button"
+                onClick={() => setShowMultimodalSettings(!showMultimodalSettings)}
+                className="text-xs text-purple-600 hover:text-purple-800"
+              >
+                {showMultimodalSettings ? 'Hide Settings' : 'Show Settings'}
+              </button>
+            )}
+          </div>
+          
+          {useMultimodal && showMultimodalSettings && (
+            <div className="space-y-3 pt-3 border-t border-purple-200">
+              <div className="grid grid-cols-2 gap-4">
+                <div>
+                  <label className="block text-xs font-medium text-purple-700 mb-1">
+                    Text Weight: {Math.round(textWeight * 100)}%
+                  </label>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="0.9"
+                    step="0.1"
+                    value={textWeight}
+                    onChange={(e) => {
+                      const newTextWeight = parseFloat(e.target.value);
+                      setTextWeight(newTextWeight);
+                      setImageWeight(1 - newTextWeight);
+                    }}
+                    className="w-full h-2 bg-purple-200 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+                <div>
+                  <label className="block text-xs font-medium text-purple-700 mb-1">
+                    Image Weight: {Math.round(imageWeight * 100)}%
+                  </label>
+                  <input
+                    type="range"
+                    min="0.1"
+                    max="0.9"
+                    step="0.1"
+                    value={imageWeight}
+                    onChange={(e) => {
+                      const newImageWeight = parseFloat(e.target.value);
+                      setImageWeight(newImageWeight);
+                      setTextWeight(1 - newImageWeight);
+                    }}
+                    className="w-full h-2 bg-purple-200 rounded-lg appearance-none cursor-pointer"
+                  />
+                </div>
+              </div>
+              <div className="text-xs text-purple-600">
+                💡 Adjust weights to prioritize text documents vs. image content in search results
+              </div>
+            </div>
+          )}
+          
+          {useMultimodal && !showMultimodalSettings && (
+            <div className="text-xs text-purple-600">
+              Text: {Math.round(textWeight * 100)}% | Images: {Math.round(imageWeight * 100)}% | 
+              Searches both text documents and image content using Vision Language Models
+            </div>
+          )}
         </div>
         
         <div className="flex justify-between items-center">
@@ -472,15 +663,34 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
             <div className="flex-1">
               <div className="flex items-center justify-between">
                 <span>{queryStatus.message}</span>
-                {/* BGE Reranking Status Indicator */}
-                {useReranking && (
-                  <div className="flex items-center ml-3">
-                    <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-medium">
-                      🎯 BGE Reranking
-                    </span>
-                    <span className="text-xs text-gray-500 ml-2">+23.86% MAP</span>
-                  </div>
-                )}
+                {/* Query Type Status Indicators */}
+                <div className="flex items-center space-x-2 ml-3">
+                  {/* Multimodal Status Indicator */}
+                  {useMultimodal && (
+                    <div className="flex items-center space-x-2">
+                      <span className="text-xs bg-purple-100 text-purple-700 px-2 py-1 rounded-full font-medium">
+                        🔮 Multimodal v0.3
+                      </span>
+                      {useReranking && (
+                        <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-medium">
+                          🎯 BGE Reranking
+                        </span>
+                      )}
+                      <span className="text-xs text-gray-500">
+                        T:{Math.round(textWeight * 100)}% I:{Math.round(imageWeight * 100)}%
+                      </span>
+                    </div>
+                  )}
+                  {/* BGE Reranking Status Indicator */}
+                  {useReranking && !useMultimodal && (
+                    <div className="flex items-center">
+                      <span className="text-xs bg-orange-100 text-orange-700 px-2 py-1 rounded-full font-medium">
+                        🎯 BGE Reranking
+                      </span>
+                      <span className="text-xs text-gray-500 ml-2">+23.86% MAP</span>
+                    </div>
+                  )}
+                </div>
               </div>
               {queryStatus.retrievalTime && (
                 <div className="text-xs mt-1">Retrieved documents in {queryStatus.retrievalTime}ms</div>

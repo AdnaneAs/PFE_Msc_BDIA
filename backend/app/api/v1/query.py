@@ -1,6 +1,6 @@
 from fastapi import APIRouter, HTTPException, BackgroundTasks, Query
 from fastapi.responses import StreamingResponse
-from app.models.query_models import QueryRequest, QueryResponse, LLMStatusResponse, StreamingQueryRequest, DecomposedQueryResponse, SubQueryResult
+from app.models.query_models import QueryRequest, QueryResponse, LLMStatusResponse, StreamingQueryRequest, DecomposedQueryResponse, SubQueryResult, MultimodalQueryRequest, MultimodalQueryResponse, ImageSource
 from app.services.embedding_service import generate_embedding
 from app.services.vector_db_service import query_documents, query_documents_advanced, get_query_suggestions
 from app.services.llm_service import get_answer_from_llm, get_llm_status, get_available_models
@@ -631,3 +631,116 @@ async def toggle_reranking(enable: bool):
     except Exception as e:
         logger.error(f"Error toggling reranking: {str(e)}", exc_info=True)
         raise HTTPException(status_code=500, detail=f"Error toggling reranking: {str(e)}")
+
+
+@router.post(
+    "/multimodal",
+    response_model=MultimodalQueryResponse,
+    summary="Query documents with multimodal search (text + images)"
+)
+async def multimodal_query(request: MultimodalQueryRequest):
+    """
+    Query both text and image documents for a comprehensive multimodal response
+    """
+    # Initialize metrics tracker
+    metrics = QueryMetricsTracker(request.question, request.config_for_model)
+    
+    try:
+        logger.info(f"Received multimodal query: '{request.question}'")
+        logger.info(f"Text weight: {request.text_weight}, Image weight: {request.image_weight}")
+        
+        # Generate embedding for the question
+        metrics.mark_retrieval_start()
+        from app.services.embedding_service import generate_embedding, get_current_model_info
+        
+        current_model = get_current_model_info()
+        model_name = current_model.get("name", "all-MiniLM-L6-v2")
+        
+        query_embedding = generate_embedding(request.question)
+        
+        # Perform multimodal search
+        from app.services.vector_db_service import query_multimodal_documents
+        
+        multimodal_results = query_multimodal_documents(
+            query_embedding=query_embedding,
+            query_text=request.question,
+            n_results=request.max_sources or 5,
+            text_weight=request.text_weight or 0.7,
+            image_weight=request.image_weight or 0.3,
+            model_name=model_name,
+            use_reranking=request.use_reranking or True,
+            reranker_model=request.reranker_model or "BAAI/bge-reranker-base"
+        )
+        
+        # Separate text and image results
+        text_sources = []
+        image_sources = []
+        
+        for metadata in multimodal_results["metadatas"]:
+            if metadata.get("content_type") == "image":
+                image_source = ImageSource(
+                    image_path=metadata["image_path"],
+                    description=metadata["description"],
+                    relevance_score=metadata.get("relevance_score", 0.0),
+                    vlm_model=metadata.get("vlm_model", "unknown"),
+                    width=metadata.get("width"),
+                    height=metadata.get("height"),
+                    format=metadata.get("format"),
+                    doc_id=str(metadata["doc_id"]),  # Convert to string
+                    original_filename=metadata.get("original_filename")
+                )
+                image_sources.append(image_source)
+            else:
+                text_sources.append(metadata)
+        
+        metrics.mark_retrieval_end(len(multimodal_results["documents"]))
+        
+        # Prepare context for LLM (include both text and image descriptions)
+        combined_documents = multimodal_results["documents"]
+        
+        # Generate enhanced prompt with image information
+        if image_sources:
+            image_context = "\n\nRelevant images found:\n"
+            for i, img_src in enumerate(image_sources, 1):
+                image_context += f"[Image {i}]: {img_src.description}\n"
+            
+            # Add image context to the documents
+            combined_documents = combined_documents + [image_context]
+        
+        # Get answer from LLM
+        metrics.mark_llm_start()
+        from app.services.llm_service import get_answer_from_llm
+        
+        answer, model_info = get_answer_from_llm(request.question, combined_documents, request.config_for_model)
+        metrics.mark_llm_end(model_info, len(answer) if answer else 0)
+        
+        # Complete metrics tracking
+        final_metrics = metrics.complete()
+        
+        # Calculate average relevance
+        all_relevance_scores = [
+            metadata.get("relevance_score", 0.0) 
+            for metadata in multimodal_results["metadatas"]
+        ]
+        avg_relevance = sum(all_relevance_scores) / len(all_relevance_scores) if all_relevance_scores else None
+        
+        logger.info(f"Multimodal query completed - Text sources: {len(text_sources)}, Image sources: {len(image_sources)}")
+        
+        return MultimodalQueryResponse(
+            answer=answer,
+            text_sources=text_sources,
+            image_sources=image_sources,
+            query_time_ms=final_metrics["total_time_ms"],
+            retrieval_time_ms=final_metrics["retrieval_time_ms"],
+            llm_time_ms=final_metrics["llm_time_ms"],
+            num_text_sources=len(text_sources),
+            num_image_sources=len(image_sources),
+            model=model_info,
+            average_relevance=round(avg_relevance, 1) if avg_relevance else None,
+            reranking_used=request.use_reranking or True
+        )
+        
+    except Exception as e:
+        logger.error(f"Error processing multimodal query: '{request.question}'", exc_info=True)
+        metrics.mark_error(str(e))
+        raise HTTPException(status_code=500, detail=f"Error processing multimodal query: {str(e)}")

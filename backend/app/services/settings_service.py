@@ -453,3 +453,55 @@ def update_model_with_validation(provider: str, model: str) -> bool:
         logger.error(f"Failed to save model update: {provider}/{model}")
     
     return success
+
+def get_available_vlm_models() -> Dict[str, List[str]]:
+    """
+    Get all available VLM models using the same dynamic detection as LLM models
+    
+    Returns:
+        Dict mapping provider to list of available models
+    """
+    # Use the same dynamic model detection as LLM system
+    all_models = get_available_models_by_provider()
+    
+    # Filter and enhance models for VLM usage
+    vlm_models = {
+        "ollama": [],
+        "openai": ["gpt-4o", "gpt-4-vision-preview", "gpt-4o-mini"],
+        "gemini": ["gemini-1.5-pro", "gemini-1.5-flash", "gemini-pro-vision"],
+        "huggingface": []
+    }
+    
+    # For Ollama, use detected models + add common VLM models
+    if "ollama" in all_models:
+        vlm_models["ollama"] = all_models["ollama"].copy()
+        # Add common VLM models that might not be detected
+        common_vlm_models = ["llava:latest", "llava:7b", "llava:13b", "llava-phi3:latest", "bakllava:latest", "moondream:latest"]
+        for model in common_vlm_models:
+            if model not in vlm_models["ollama"]:
+                vlm_models["ollama"].append(model)
+    else:
+        vlm_models["ollama"] = ["llava:latest", "llava:7b", "llava:13b", "llava-phi3:latest", "bakllava:latest", "moondream:latest"]
+    
+    # For HuggingFace, use detected models + add VLM-specific models
+    if "huggingface" in all_models:
+        vlm_models["huggingface"] = all_models["huggingface"].copy()
+        # Add VLM-specific models
+        vlm_specific_models = [
+            "Salesforce/blip-image-captioning-base",
+            "Salesforce/blip-image-captioning-large",
+            "Salesforce/blip2-opt-2.7b",
+            "microsoft/git-base"
+        ]
+        for model in vlm_specific_models:
+            if model not in vlm_models["huggingface"]:
+                vlm_models["huggingface"].append(model)
+    else:
+        vlm_models["huggingface"] = [
+            "Salesforce/blip-image-captioning-base",
+            "Salesforce/blip-image-captioning-large",
+            "Salesforce/blip2-opt-2.7b",
+            "microsoft/git-base"
+        ]
+    
+    return vlm_models

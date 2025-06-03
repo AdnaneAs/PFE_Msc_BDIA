@@ -31,46 +31,95 @@ const ResultDisplay = ({ result }) => {
   
   // Process sources data when it changes
   useEffect(() => {
+    console.log("Sources processing effect triggered, result:", result); // Debug log
     let allSources = [];
     
+    // Handle multimodal queries - process text and image sources
+    if (result && result.multimodal) {
+      console.log("Processing multimodal query sources:", result);
+      
+      // Aggregate text sources
+      if (result.text_sources && Array.isArray(result.text_sources)) {
+        console.log("Found text_sources:", result.text_sources.length); // Debug log
+        allSources = allSources.concat(
+          result.text_sources.map(source => ({...source, source_type: 'text'}))
+        );
+      }
+      
+      // Aggregate image sources
+      if (result.image_sources && Array.isArray(result.image_sources)) {
+        console.log("Found image_sources:", result.image_sources.length); // Debug log
+        console.log("Image sources structure:", result.image_sources); // Detailed debug log
+        allSources = allSources.concat(
+          result.image_sources.map(source => {
+            console.log("Processing image source:", source); // Debug each source
+            return {...source, source_type: 'image'};
+          })
+        );
+      }
+    }
     // Handle decomposed queries - aggregate sources from all sub-results
-    if (result && result.is_decomposed && result.sub_results && Array.isArray(result.sub_results)) {
+    else if (result && result.is_decomposed && result.sub_results && Array.isArray(result.sub_results)) {
+      console.log("Processing decomposed query sources:", result.sub_results.length); // Debug log
       result.sub_results.forEach(subResult => {
         if (subResult.sources && Array.isArray(subResult.sources)) {
-          allSources = allSources.concat(subResult.sources);
+          allSources = allSources.concat(
+            subResult.sources.map(source => ({...source, source_type: 'text'}))
+          );
         }
       });
     } 
     // Handle regular queries
     else if (result && result.sources && Array.isArray(result.sources)) {
-      allSources = result.sources;
+      console.log("Processing regular query sources:", result.sources.length); // Debug log
+      allSources = result.sources.map(source => ({...source, source_type: 'text'}));
     }
     
+    console.log("Total allSources collected:", allSources.length); // Debug log
+    
     if (allSources.length > 0) {
-      // Group sources by filename to avoid duplicates, prioritizing original_filename
+      // Group sources by filename and type to avoid duplicates, prioritizing original_filename
       const groupedSources = allSources.reduce((acc, source) => {
         // Use original_filename if available, fallback to filename
         const displayFilename = source.original_filename || source.filename;
-        if (!acc[displayFilename]) {
-          acc[displayFilename] = [];
+        const sourceType = source.source_type || 'text';
+        const groupKey = `${displayFilename}_${sourceType}`;
+        
+        if (!acc[groupKey]) {
+          acc[groupKey] = [];
         }
-        acc[displayFilename].push({...source, displayFilename});
+        acc[groupKey].push({...source, displayFilename, sourceType});
         return acc;
       }, {});
       
-      // Convert to array for rendering
-      const processedSources = Object.entries(groupedSources).map(([filename, chunks]) => ({
-        filename,
-        count: chunks.length,
-        totalChunks: chunks[0].total_chunks || chunks.length,
-        chunks
-      }));
+      // Convert to array for rendering, separating text and image sources
+      const processedSources = Object.entries(groupedSources).map(([groupKey, chunks]) => {
+        const sourceType = chunks[0].sourceType;
+        const filename = chunks[0].displayFilename;
+        
+        return {
+          filename,
+          sourceType,
+          count: chunks.length,
+          totalChunks: chunks[0].total_chunks || chunks.length,
+          chunks,
+          isImage: sourceType === 'image'
+        };
+      });
+      
+      // Sort sources - text first, then images
+      processedSources.sort((a, b) => {
+        if (a.sourceType !== b.sourceType) {
+          return a.sourceType === 'text' ? -1 : 1;
+        }
+        return a.filename.localeCompare(b.filename);
+      });
       
       setRenderedSources(processedSources);
     } else {
       setRenderedSources([]);
     }
-  }, [result?.sources, result?.sub_results, result?.is_decomposed]);
+  }, [result?.sources, result?.sub_results, result?.is_decomposed, result?.text_sources, result?.image_sources, result?.multimodal]);
 
   // Handle source click to show modal
   const handleSourceClick = async (source) => {
@@ -81,11 +130,48 @@ const ResultDisplay = ({ result }) => {
     setChunkData(null);
     
     try {
-      // For grouped sources (from renderedSources), get the first chunk's doc_id
-      const docId = source.chunks ? source.chunks[0].doc_id : source.doc_id;
-      console.log('Using doc_id:', docId); // Debug log
+      // Special handling for image sources - use the image data directly, not document chunks
+      if (source.sourceType === 'image') {
+        console.log('Processing image source:', source);
+        console.log('Source chunks data:', source.chunks);
+        
+        // For image sources, create chunks from the image data preserving all image paths
+        const imageChunks = source.chunks.map(chunk => {
+          console.log('Processing image chunk:', chunk);
+          
+          // Extract image path from various possible locations
+          const imagePath = chunk.image_path || 
+                           chunk.metadata?.image_path || 
+                           chunk.filename ||
+                           chunk.metadata?.filename;
+          
+          console.log('Extracted image path:', imagePath);
+          
+          return {
+            ...chunk,
+            content: chunk.description || chunk.content || chunk.text || 'Image description not available',
+            metadata: {
+              ...chunk.metadata,
+              is_image: true,
+              has_images: true,
+              image_path: imagePath
+            }
+          };
+        });
+        
+        console.log('Final image chunks:', imageChunks);
+        setChunkData({ 
+          chunks: imageChunks, 
+          total_chunks: imageChunks.length 
+        });
+        setLoadingChunks(false);
+        return;
+      }
       
-      // Fetch actual chunk content for this document
+      // For text sources, fetch document chunks as before
+      const docId = source.chunks ? source.chunks[0].doc_id : source.doc_id;
+      console.log('Using doc_id for text source:', docId); // Debug log
+      
       const chunksResponse = await getDocumentChunks(docId);
       setChunkData(chunksResponse);
     } catch (error) {
@@ -112,24 +198,118 @@ const ResultDisplay = ({ result }) => {
     const content = chunk.content || chunk.text || '';
     const metadata = chunk.metadata || {};
     
-    // Check for images
-    if (metadata.has_images || chunk.image_base64) {
+    // Debug logging for image chunks
+    if (metadata.has_images || metadata.is_image || chunk.image_base64) {
+      console.log('Rendering image chunk:', {
+        metadata,
+        chunk_keys: Object.keys(chunk),
+        metadata_keys: Object.keys(metadata),
+        image_path: metadata.image_path,
+        docId: chunk.doc_id || selectedSource?.chunks?.[0]?.doc_id,
+        full_chunk: chunk
+      });
+    }
+    
+    // Check for images - simple approach using image_path from metadata
+    if (metadata.has_images || metadata.is_image || chunk.image_base64 || metadata.image_path) {
       return (
         <div className="mb-4">
-          <div className="flex items-center text-sm text-purple-600 mb-2">
-            <FiImage className="mr-1" />
-            Image Content
+          <div className="flex items-center text-sm text-purple-600 mb-3">
+            <FiImage className="mr-2" />
+            <span className="font-medium">Image Content</span>
           </div>
-          {chunk.image_base64 && (
-            <img 
-              src={`data:image/jpeg;base64,${chunk.image_base64}`}
-              alt="Document content"
-              className="max-w-full h-auto rounded border mb-2"
-            />
+          
+          {/* Display image using image_path from metadata */}
+          {metadata.image_path ? (
+            <div className="mb-4">
+              <img 
+                src={(() => {
+                  // Convert file system path to API URL
+                  // Path format: C:\Users\Anton\Desktop\PFE_sys\backend\data\images\1\img_p16_1.png
+                  // Extract doc_id and filename from the path
+                  const imagePath = metadata.image_path;
+                  
+                  // Handle both Windows and Unix path separators
+                  const pathParts = imagePath.replace(/\\/g, '/').split('/');
+                  
+                  // Find the "images" folder and extract doc_id and filename
+                  const imagesIndex = pathParts.findIndex(part => part === 'images');
+                  if (imagesIndex !== -1 && imagesIndex + 2 < pathParts.length) {
+                    const docId = pathParts[imagesIndex + 1];
+                    const filename = pathParts[pathParts.length - 1];
+                    console.log('Converted image path:', { docId, filename, originalPath: imagePath });
+                    return `http://localhost:8000/api/v1/documents/${docId}/images/${filename}`;
+                  }
+                  
+                  // Fallback - try to extract filename and use chunk.doc_id
+                  const filename = pathParts[pathParts.length - 1];
+                  const docId = chunk.doc_id || selectedSource?.chunks?.[0]?.doc_id;
+                  if (docId && filename) {
+                    console.log('Fallback image path conversion:', { docId, filename, originalPath: imagePath });
+                    return `http://localhost:8000/api/v1/documents/${docId}/images/${filename}`;
+                  }
+                  
+                  console.warn('Could not convert image path to API URL:', imagePath);
+                  return imagePath; // Will likely fail, but keep original for debugging
+                })()}
+                alt="Document image content"
+                className="max-w-full h-auto rounded-lg border shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                onClick={(e) => {
+                  // Allow clicking to view full size
+                  const img = e.target;
+                  if (img.requestFullscreen) {
+                    img.requestFullscreen();
+                  }
+                }}
+                onError={(e) => {
+                  console.error('Error loading image from converted URL:', e.target.src);
+                  console.log('Original image path:', metadata.image_path);
+                  
+                  // Final fallback - hide image and show error
+                  e.target.style.display = 'none';
+                  e.target.nextElementSibling.style.display = 'block';
+                }}
+              />
+              <div className="bg-red-50 border border-red-200 rounded-lg p-3" style={{display: 'none'}}>
+                <div className="flex items-center text-sm text-red-700">
+                  <FiAlertTriangle className="mr-2" />
+                  Failed to load image. Original path:
+                  <br />• {metadata.image_path}
+                </div>
+              </div>
+            </div>
+          ) : chunk.image_base64 ? (
+            <div className="mb-4">
+              <img 
+                src={`data:image/jpeg;base64,${chunk.image_base64}`}
+                alt="Document image content"
+                className="max-w-full h-auto rounded-lg border shadow-sm cursor-pointer hover:shadow-md transition-shadow"
+                onClick={(e) => {
+                  const img = e.target;
+                  if (img.requestFullscreen) {
+                    img.requestFullscreen();
+                  }
+                }}
+              />
+            </div>
+          ) : (
+            <div className="bg-yellow-50 border border-yellow-200 rounded-lg p-3">
+              <div className="flex items-center text-sm text-yellow-700">
+                <FiAlertTriangle className="mr-2" />
+                Image data not available in metadata. Missing image_path field.
+              </div>
+            </div>
           )}
+          
           {content && (
-            <div className="text-sm text-gray-700 bg-gray-50 p-3 rounded">
-              {content}
+            <div className="bg-purple-50 border border-purple-200 rounded-lg p-4">
+              <div className="flex items-center text-sm text-purple-700 mb-2">
+                <FiFileText className="mr-1" />
+                Image Description
+              </div>
+              <div className="text-sm text-gray-800 leading-relaxed">
+                {content}
+              </div>
             </div>
           )}
         </div>
@@ -175,12 +355,28 @@ const ResultDisplay = ({ result }) => {
       <div className="fixed inset-0 bg-black bg-opacity-50 flex items-center justify-center z-50 p-4">
         <div className="bg-white rounded-lg max-w-4xl w-full max-h-[80vh] overflow-hidden">
           {/* Modal Header */}
-          <div className="flex items-center justify-between p-4 border-b bg-gradient-to-r from-blue-50 to-indigo-50">
+          <div className={`flex items-center justify-between p-4 border-b ${
+            selectedSource.sourceType === 'image' 
+              ? 'bg-gradient-to-r from-purple-50 to-pink-50' 
+              : 'bg-gradient-to-r from-blue-50 to-indigo-50'
+          }`}>
             <div>
-              <h3 className="text-lg font-semibold text-gray-800">Source Document Content</h3>
+              <h3 className="text-lg font-semibold text-gray-800 flex items-center">
+                {selectedSource.sourceType === 'image' ? (
+                  <>
+                    <FiImage className="mr-2 text-purple-600" />
+                    Image Content & Description
+                  </>
+                ) : (
+                  <>
+                    <FiFileText className="mr-2 text-blue-600" />
+                    Source Document Content
+                  </>
+                )}
+              </h3>
               <p className="text-sm text-gray-600">{selectedSource.original_filename || selectedSource.filename}</p>
               <p className="text-xs text-gray-500">
-                {loadingChunks ? 'Loading chunks...' : 
+                {loadingChunks ? 'Loading content...' : 
                  chunkData?.chunks ? `${chunkData.chunks.length} chunks found` :
                  `${selectedSource.count || 0} chunks used from this document`}
               </p>
@@ -415,27 +611,49 @@ const ResultDisplay = ({ result }) => {
         </div>
       )}
       
-      {/* Source summary */}
+      {/* Source summary - Enhanced for multimodal */}
       {renderedSources.length > 0 && (
         <div className="mb-4">
           <h3 className="font-medium text-gray-700 mb-2 flex items-center">
             <FiDatabase className="mr-1" /> 
             <span>Source Documents</span>
-            <span className="ml-2 text-sm text-gray-500">({renderedSources.length} files used)</span>
+            <span className="ml-2 text-sm text-gray-500">
+              ({renderedSources.filter(s => s.sourceType === 'text').length} text, {renderedSources.filter(s => s.sourceType === 'image').length} image files)
+            </span>
+            {result?.multimodal && (
+              <span className="ml-2 text-xs text-purple-500 bg-purple-100 px-2 py-1 rounded-full">
+                🔮 Multimodal v0.3
+              </span>
+            )}
             <span className="ml-2 text-xs text-blue-500 italic">• Click to view content</span>
           </h3>
           <div className="bg-gray-50 rounded-md p-2 max-h-[150px] overflow-y-auto">
             {renderedSources.map((source, idx) => (
               <div 
                 key={idx} 
-                className="text-sm p-2 hover:bg-blue-50 rounded flex items-center justify-between cursor-pointer transition-colors border border-transparent hover:border-blue-200"
+                className={`text-sm p-2 hover:bg-blue-50 rounded flex items-center justify-between cursor-pointer transition-colors border border-transparent hover:border-blue-200 ${
+                  source.sourceType === 'image' ? 'bg-purple-50 hover:bg-purple-100 hover:border-purple-200' : ''
+                }`}
                 onClick={() => handleSourceClick(source)}
               >
                 <div className="flex items-center">
-                  <FiDatabase className="mr-2 text-blue-500" />
-                  <span className="font-medium text-blue-700 hover:text-blue-800">{source.filename}</span>
+                  {source.sourceType === 'image' ? (
+                    <FiImage className="mr-2 text-purple-500" />
+                  ) : (
+                    <FiFileText className="mr-2 text-blue-500" />
+                  )}
+                  <span className={`font-medium ${
+                    source.sourceType === 'image' ? 'text-purple-700 hover:text-purple-800' : 'text-blue-700 hover:text-blue-800'
+                  }`}>
+                    {source.filename}
+                  </span>
+                  {source.sourceType === 'image' && (
+                    <span className="ml-2 text-xs text-purple-600 bg-purple-200 px-1 rounded">IMG</span>
+                  )}
                 </div>
-                <span className="text-xs text-gray-500 bg-white px-2 py-1 rounded">
+                <span className={`text-xs px-2 py-1 rounded ${
+                  source.sourceType === 'image' ? 'text-purple-500 bg-purple-200' : 'text-gray-500 bg-white'
+                }`}>
                   {source.count} chunks used
                 </span>
               </div>
@@ -508,13 +726,31 @@ const ResultDisplay = ({ result }) => {
                      search_strategy === 'semantic' ? '🧠 Semantic' : '🔤 Keyword'}
                   </span>
                 </div>
+                {result?.multimodal && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Query Type:</span>
+                    <span className="font-medium text-purple-600">🔮 Multimodal v0.3</span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-gray-600">Sources used:</span>
                   <span className="font-medium text-gray-800">
-                    {renderedSources.length > 0 ? renderedSources.length : 
-                     (result?.is_decomposed ? (result?.total_sources || 'N/A') : (num_sources || 'N/A'))}
+                    {result?.multimodal ? (
+                      `${renderedSources.filter(s => s.sourceType === 'text').length}T + ${renderedSources.filter(s => s.sourceType === 'image').length}I`
+                    ) : (
+                      renderedSources.length > 0 ? renderedSources.length : 
+                      (result?.is_decomposed ? (result?.total_sources || 'N/A') : (num_sources || 'N/A'))
+                    )}
                   </span>
                 </div>
+                {result?.multimodal && result?.text_weight !== undefined && result?.image_weight !== undefined && (
+                  <div className="flex justify-between">
+                    <span className="text-gray-600">Weights:</span>
+                    <span className="font-medium text-purple-600 text-[10px]">
+                      T:{Math.round(result.text_weight * 100)}% I:{Math.round(result.image_weight * 100)}%
+                    </span>
+                  </div>
+                )}
                 <div className="flex justify-between">
                   <span className="text-gray-600">Model:</span>
                   <span className="font-medium text-gray-800 text-[10px]">{model || 'N/A'}</span>

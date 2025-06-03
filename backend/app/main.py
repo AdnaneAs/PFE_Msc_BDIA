@@ -51,13 +51,13 @@ async def health_check():
     return {"status": "healthy", "message": "Backend server is running"}
 
 # Include API routers with correct prefixes to match frontend expectations
-app.include_router(documents.router, prefix="/api/documents", tags=["documents"])
-app.include_router(query.router, prefix="/api/query", tags=["query"])
-app.include_router(models.router, tags=["models"])
-app.include_router(config.router, tags=["configuration"])
+app.include_router(documents.router, prefix="/api/v1/documents", tags=["documents"])
+app.include_router(query.router, prefix="/api/v1/query", tags=["query"])
+app.include_router(models.router, prefix="/api/v1/models", tags=["embedding-models"])
+app.include_router(config.router, prefix="/api/v1/config", tags=["configuration"])
 
 # Add models endpoint for frontend compatibility
-@app.get("/api/query/models") 
+@app.get("/api/v1/query/models") 
 async def get_available_models():
     logger.info("Models endpoint called")
     return {

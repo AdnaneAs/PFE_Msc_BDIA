@@ -20,7 +20,7 @@ from app.config import AVAILABLE_EMBEDDING_MODELS
 # Configure logging
 logger = logging.getLogger(__name__)
 
-router = APIRouter(prefix="/api/v1/config", tags=["configuration"])
+router = APIRouter(tags=["configuration"])
 
 @router.get(
     "/",
@@ -807,4 +807,165 @@ async def refresh_available_models() -> Dict[str, Any]:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to refresh available models: {str(e)}"
+        )
+
+# VLM Configuration Endpoints
+
+@router.get(
+    "/vlm",
+    summary="Get VLM configuration",
+    response_description="VLM provider, model, and available options"
+)
+async def get_vlm_configuration() -> Dict[str, Any]:
+    """
+    Get current VLM configuration and available models
+    
+    Returns:
+        Dict containing VLM configuration
+    """
+    try:
+        from app.services.settings_service import get_available_vlm_models
+        
+        # Load user settings
+        user_settings = load_settings()
+        
+        # Get current VLM configuration
+        current_vlm_provider = user_settings.get("vlm_provider", "ollama")
+        current_vlm_model = user_settings.get("vlm_model", "llava:latest")
+        
+        # Get available VLM models by provider
+        available_vlm_models = get_available_vlm_models()
+        
+        # Build provider info
+        available_vlm_providers = {}
+        for provider, models in available_vlm_models.items():
+            provider_info = {
+                "name": provider,
+                "models": models
+            }
+            
+            if provider == "ollama":
+                provider_info.update({
+                    "display_name": "Ollama (Local)",
+                    "description": "Local VLM inference with models like LLaVA",
+                    "status": "available" if models else "unavailable"
+                })
+            elif provider == "openai":
+                provider_info.update({
+                    "display_name": "OpenAI GPT-4 Vision",
+                    "description": "OpenAI vision models (API key required)",
+                    "status": "available" if user_settings.get("api_key_openai") else "unavailable"
+                })
+            elif provider == "gemini":
+                provider_info.update({
+                    "display_name": "Google Gemini Pro Vision",
+                    "description": "Google Gemini vision models (API key required)",
+                    "status": "available" if user_settings.get("api_key_gemini") else "unavailable"
+                })
+            elif provider == "huggingface":
+                provider_info.update({
+                    "display_name": "Hugging Face Vision",
+                    "description": "HuggingFace vision models (BLIP, GIT, etc.)",
+                    "status": "available"
+                })
+            
+            available_vlm_providers[provider] = provider_info
+        
+        return {
+            "vlm": {
+                "current_provider": current_vlm_provider,
+                "current_model": current_vlm_model,
+                "available_providers": available_vlm_providers
+            }
+        }
+        
+    except Exception as e:
+        logger.error(f"Error getting VLM configuration: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get VLM configuration: {str(e)}"
+        )
+
+@router.post(
+    "/vlm/provider",
+    summary="Update VLM provider",
+    response_description="Confirmation of VLM provider update"
+)
+async def update_vlm_provider_endpoint(request: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Update the VLM provider setting
+    
+    Args:
+        request: Dict with 'provider' key
+        
+    Returns:
+        Confirmation message
+    """
+    try:
+        provider = request.get("provider")
+        if not provider:
+            raise HTTPException(status_code=400, detail="Provider is required")
+        
+        # Validate provider
+        valid_providers = ["ollama", "openai", "gemini", "huggingface"]
+        if provider not in valid_providers:
+            raise HTTPException(
+                status_code=400, 
+                detail=f"Invalid provider. Must be one of: {valid_providers}"
+            )
+        
+        # Update setting
+        update_setting("vlm_provider", provider)
+        
+        logger.info(f"VLM provider updated to: {provider}")
+        
+        return {
+            "message": f"VLM provider updated to {provider}",
+            "provider": provider,
+            "updated_at": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error updating VLM provider: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update VLM provider: {str(e)}"
+        )
+
+@router.post(
+    "/vlm/model",
+    summary="Update VLM model",
+    response_description="Confirmation of VLM model update"
+)
+async def update_vlm_model_endpoint(request: Dict[str, str]) -> Dict[str, Any]:
+    """
+    Update the VLM model setting
+    
+    Args:
+        request: Dict with 'model' key
+        
+    Returns:
+        Confirmation message
+    """
+    try:
+        model = request.get("model")
+        if not model:
+            raise HTTPException(status_code=400, detail="Model is required")
+        
+        # Update setting
+        update_setting("vlm_model", model)
+        
+        logger.info(f"VLM model updated to: {model}")
+        
+        return {
+            "message": f"VLM model updated to {model}",
+            "model": model,
+            "updated_at": datetime.now().isoformat()
+        }
+        
+    except Exception as e:
+        logger.error(f"Error updating VLM model: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to update VLM model: {str(e)}"
         )

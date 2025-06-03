@@ -26,6 +26,10 @@ logger.info(f"Vector database path: {CHROMA_DB_PATH}")
 # Initialize ChromaDB client
 _client = None
 
+# Collection type constants
+DOCUMENTS_COLLECTION_PREFIX = "documents"
+IMAGES_COLLECTION_PREFIX = "images"
+
 def get_chroma_client():
     """
     Get or initialize the ChromaDB client
@@ -636,3 +640,166 @@ def delete_from_all_models(doc_id: str = None, filename: str = None) -> bool:
             continue
     
     return success
+
+def get_image_collection(model_name: Optional[str] = None):
+    """
+    Get or create an image-specific collection in ChromaDB
+    
+    Args:
+        model_name: Name of the embedding model (auto-detected if None)
+        
+    Returns:
+        chromadb.Collection: The image collection object
+    """
+    return get_collection(IMAGES_COLLECTION_PREFIX, model_name)
+
+def add_image_documents(descriptions: List[str], embeddings: List[List[float]], metadatas: List[Dict[str, Any]], model_name: Optional[str] = None):
+    """
+    Add image descriptions and their embeddings to the image vector database
+    
+    Args:
+        descriptions: List of image descriptions
+        embeddings: List of embedding vectors for the descriptions
+        metadatas: List of metadata for each image
+        model_name: Name of the embedding model (auto-detected if None)
+    """
+    collection = get_image_collection(model_name)
+    
+    # Generate unique IDs for each image
+    ids = [f"img_{metadata['doc_id']}_{metadata['image_index']}_{metadata['image_hash'][:8]}" for metadata in metadatas]
+    
+    try:
+        collection.add(
+            documents=descriptions,
+            embeddings=embeddings,
+            metadatas=metadatas,
+            ids=ids
+        )
+        logger.info(f"Added {len(descriptions)} image documents to collection '{collection.name}'")
+    except Exception as e:
+        logger.error(f"Error adding image documents to vector database: {str(e)}")
+        raise
+
+def query_image_documents(
+    query_embedding: List[float],
+    n_results: int = TOP_K_RESULTS,
+    model_name: Optional[str] = None
+) -> Dict[str, Any]:
+    """
+    Query image descriptions in the vector database
+    
+    Args:
+        query_embedding: Embedding of the query
+        n_results: Number of results to return
+        model_name: Name of the embedding model (auto-detected if None)
+        
+    Returns:
+        Dict[str, Any]: Query results
+    """
+    collection = get_image_collection(model_name)
+    
+    try:
+        results = collection.query(
+            query_embeddings=[query_embedding],
+            n_results=n_results
+        )
+        
+        descriptions = results.get("documents", [[]])[0]
+        metadatas = results.get("metadatas", [[]])[0]
+        distances = results.get("distances", [[]])[0]
+        ids = results.get("ids", [[]])[0]
+        
+        logger.info(f"Found {len(descriptions)} relevant images")
+        
+        return {
+            "documents": descriptions,
+            "metadatas": metadatas,
+            "distances": distances,
+            "ids": ids
+        }
+    except Exception as e:
+        logger.error(f"Error querying image documents: {str(e)}")
+        return {
+            "documents": [],
+            "metadatas": [],
+            "distances": [],
+            "ids": []
+        }
+
+def query_multimodal_documents(
+    query_embedding: List[float],
+    query_text: str,
+    n_results: int = TOP_K_RESULTS,
+    text_weight: float = 0.7,
+    image_weight: float = 0.3,
+    model_name: Optional[str] = None,
+    use_reranking: bool = False,
+    reranker_model: str = "BAAI/bge-reranker-base"
+) -> Dict[str, Any]:
+    """
+    Query both text and image collections and merge results
+    
+    Args:
+        query_embedding: Embedding of the query
+        query_text: Original query text
+        n_results: Total number of results to return
+        text_weight: Weight for text results (0.0-1.0)
+        image_weight: Weight for image results (0.0-1.0)
+        model_name: Name of the embedding model
+        use_reranking: Whether to apply BGE reranking to improve results
+        reranker_model: BGE reranker model to use
+        
+    Returns:
+        Dict[str, Any]: Merged multimodal results
+    """
+    # Calculate how many results to get from each collection
+    text_results_count = max(1, int(n_results * text_weight))
+    image_results_count = max(1, int(n_results * image_weight))
+      # Query text documents
+    text_results = query_documents_advanced(
+        query_embedding=query_embedding,
+        query_text=query_text,
+        n_results=text_results_count,
+        model_name=model_name,
+        use_reranking=use_reranking,
+        reranker_model=reranker_model
+    )
+    
+    # Query image documents
+    image_results = query_image_documents(
+        query_embedding=query_embedding,
+        n_results=image_results_count,
+        model_name=model_name
+    )
+    
+    # Merge results
+    merged_documents = text_results["documents"] + image_results["documents"]
+    merged_metadatas = text_results["metadatas"] + image_results["metadatas"]
+    merged_distances = text_results["distances"] + image_results["distances"]
+    merged_ids = text_results["ids"] + image_results["ids"]
+    
+    # Add type indicator to metadata
+    for metadata in text_results["metadatas"]:
+        metadata["content_type"] = "text"
+    for metadata in image_results["metadatas"]:
+        metadata["content_type"] = "image"
+    
+    # Sort by relevance (lower distance = higher relevance)
+    if merged_distances:
+        sorted_indices = sorted(range(len(merged_distances)), key=lambda i: merged_distances[i])
+        
+        merged_documents = [merged_documents[i] for i in sorted_indices[:n_results]]
+        merged_metadatas = [merged_metadatas[i] for i in sorted_indices[:n_results]]
+        merged_distances = [merged_distances[i] for i in sorted_indices[:n_results]]
+        merged_ids = [merged_ids[i] for i in sorted_indices[:n_results]]
+    
+    logger.info(f"Multimodal search returned {len(merged_documents)} results ({len(text_results['documents'])} text, {len(image_results['documents'])} images)")
+    
+    return {
+        "documents": merged_documents,
+        "metadatas": merged_metadatas,
+        "distances": merged_distances,
+        "ids": merged_ids,
+        "text_count": len(text_results["documents"]),
+        "image_count": len(image_results["documents"])
+    }

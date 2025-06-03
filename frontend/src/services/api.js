@@ -218,7 +218,7 @@ export const uploadDocument = async (file) => {
     
     console.log(`Uploading file: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
     
-    const response = await fetchWithRetry(`${API_BASE_URL}/api/documents/upload`, {
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/documents/upload`, {
       method: 'POST',
       body: formData,
     }, 1); // Allow 1 retry for uploads
@@ -257,7 +257,7 @@ export const uploadDocumentAsync = async (file) => {
     
     console.log(`Starting async upload for: ${file.name} (${(file.size / 1024).toFixed(2)} KB)`);
     
-    const response = await fetch(`${API_BASE_URL}/api/documents/upload`, {
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents/upload`, {
       method: 'POST',
       body: formData,
     });
@@ -278,7 +278,7 @@ export const uploadDocumentAsync = async (file) => {
 export const getDocumentStatus = async (docId) => {
   try {
     console.log(`Polling status for document: ${docId}`);
-    const response = await fetch(`${API_BASE_URL}/api/documents/status/${docId}`);
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents/status/${docId}`);
     return await handleApiResponse(response);
   } catch (error) {
     console.error('Error fetching document status:', error);
@@ -294,7 +294,7 @@ export const getDocumentStatus = async (docId) => {
 export const streamDocumentStatus = (docId) => {
   try {
     console.log(`Creating event source for document: ${docId}`);
-    const eventSource = new EventSource(`${API_BASE_URL}/api/documents/status/stream/${docId}`);
+    const eventSource = new EventSource(`${API_BASE_URL}/api/v1/documents/status/stream/${docId}`);
     
     // Add error listener to handle connection issues
     eventSource.onerror = (error) => {
@@ -336,7 +336,7 @@ export const submitQuery = async (question, modelConfig = {}, searchStrategy = '
     
     // Start time for performance tracking
     const startTime = performance.now();
-      const response = await fetchWithRetry(`${API_BASE_URL}/api/query/`, {
+      const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/query/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -415,7 +415,7 @@ export const getLLMStatus = async () => {
     const controller = new AbortController();
     const timeoutId = setTimeout(() => controller.abort(), 5000); // 5 second timeout for status
     
-    const response = await fetch(`${API_BASE_URL}/api/query/status`, {
+    const response = await fetch(`${API_BASE_URL}/api/v1/query/status`, {
       signal: controller.signal
     });
     
@@ -445,8 +445,7 @@ export const getLLMStatus = async () => {
       successful_queries: 0,
       cache_size: 0,
       last_model_used: null,
-      last_query_time: null,
-      status: 'connection_error'
+      last_query_time: null,      status: 'connection_error'
     };
   }
 };
@@ -467,7 +466,7 @@ export const getLLMStatus = async () => {
  */
 export const fetchStreamingQuery = async (question) => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/query/stream/`, {
+    const response = await fetch(`${API_BASE_URL}/api/v1/query/stream/`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -494,7 +493,7 @@ export const fetchStreamingQuery = async (question) => {
  */
 export const getDocuments = async () => {
   try {
-    const response = await fetch(`${API_BASE_URL}/api/documents`);
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents`);
     if (!response.ok) {
       throw new Error('Failed to fetch documents');
     }
@@ -515,7 +514,7 @@ export const getDocuments = async () => {
 export const getDocumentById = async (documentId) => {
   try {
     console.log(`Fetching document details for ID: ${documentId}`);
-    const response = await fetch(`${API_BASE_URL}/api/documents/${documentId}`);
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}`);
     return await handleApiResponse(response);
   } catch (error) {
     console.error(`Error fetching document ${documentId}:`, error);
@@ -532,7 +531,7 @@ export const getDocumentById = async (documentId) => {
 export const deleteDocument = async (documentId) => {
   try {
     console.log(`Deleting document with ID: ${documentId}`);
-    const response = await fetch(`${API_BASE_URL}/api/documents/${documentId}`, {
+    const response = await fetch(`${API_BASE_URL}/api/v1/documents/${documentId}`, {
       method: 'DELETE',
     });
     return await handleApiResponse(response);
@@ -551,7 +550,7 @@ export const deleteDocument = async (documentId) => {
 export const getDocumentImages = async (documentId) => {
   try {
     console.log(`Fetching images for document ID: ${documentId}`);
-    const response = await fetchWithRetry(`${API_BASE_URL}/api/documents/${documentId}/images`);
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/documents/${documentId}/images`);
     return await handleApiResponse(response);
   } catch (error) {
     console.error(`Error fetching images for document ${documentId}:`, error);
@@ -566,7 +565,7 @@ export const getDocumentImages = async (documentId) => {
  * @returns {string} The complete URL to the image
  */
 export const getDocumentImageUrl = (documentId, imageFilename) => {
-  return `${API_BASE_URL}/api/documents/${documentId}/images/${imageFilename}`;
+  return `${API_BASE_URL}/api/v1/documents/${documentId}/images/${imageFilename}`;
 };
 
 /**
@@ -579,7 +578,7 @@ export const getDocumentImageUrl = (documentId, imageFilename) => {
 export const downloadDocumentImage = async (documentId, imageFilename) => {
   try {
     console.log(`Downloading image ${imageFilename} for document ID: ${documentId}`);
-    const response = await fetchWithRetry(`${API_BASE_URL}/api/documents/${documentId}/images/${imageFilename}`);
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/documents/${documentId}/images/${imageFilename}`);
     
     if (!response.ok) {
       throw new Error(`Failed to download image: ${response.status} ${response.statusText}`);
@@ -619,7 +618,7 @@ export const submitDecomposedQuery = async (question, modelConfig = {}, searchSt
     // Start time for performance tracking
     const startTime = performance.now();
     
-    const response = await fetchWithRetry(`${API_BASE_URL}/api/query/decomposed`, {
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/query/decomposed`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -709,7 +708,7 @@ export const submitDecomposedQuery = async (question, modelConfig = {}, searchSt
 export const getDocumentChunks = async (docId) => {
   try {
     console.log(`Fetching chunks for document ID: ${docId}`);
-    const response = await fetchWithRetry(`${API_BASE_URL}/api/documents/${docId}/chunks`);
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/documents/${docId}/chunks`);
     return await handleApiResponse(response);
   } catch (error) {
     console.error(`Error fetching chunks for document ${docId}:`, error);
@@ -727,7 +726,7 @@ export const getDocumentChunks = async (docId) => {
 export const getDocumentChunk = async (docId, chunkIndex) => {
   try {
     console.log(`Fetching chunk ${chunkIndex} for document ID: ${docId}`);
-    const response = await fetchWithRetry(`${API_BASE_URL}/api/documents/${docId}/chunks/${chunkIndex}`);
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/documents/${docId}/chunks/${chunkIndex}`);
     return await handleApiResponse(response);
   } catch (error) {
     console.error(`Error fetching chunk ${chunkIndex} for document ${docId}:`, error);
@@ -745,7 +744,7 @@ export const getSystemConfiguration = async () => {
   }
 
   try {
-    const response = await fetch(`${API_BASE_URL}/api/v1/config/`);
+    const response = await fetch(`${API_BASE_URL}/api/v1/config`);
     return await handleApiResponse(response);
   } catch (error) {
     console.error('Failed to get system configuration:', error);
@@ -1035,7 +1034,7 @@ export const getApiKey = (provider) => {
  */
 export const getRerankerConfig = async () => {
   try {
-    const response = await fetchWithRetry(`${API_BASE_URL}/api/query/reranker/config`);
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/query/reranker/config`);
     return await handleApiResponse(response);
   } catch (error) {
     console.error('Failed to get reranker configuration:', error);
@@ -1072,7 +1071,7 @@ export const toggleReranking = async (enable) => {
  */
 export const testReranker = async (question, rerankerModel = 'BAAI/bge-reranker-base') => {
   try {
-    const response = await fetchWithRetry(`${API_BASE_URL}/api/query/reranker/test`, {
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/query/reranker/test`, {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
@@ -1158,6 +1157,153 @@ export const getCacheStatus = async () => {
     return data;
   } catch (error) {
     console.error('Error getting cache status:', error);
+    throw error;
+  }
+};
+
+/**
+ * Submit a multimodal query (text + images) to the backend API
+ * @param {string} question - The question to ask
+ * @param {Object} modelConfig - Configuration for the LLM model
+ * @param {number} maxSources - Maximum number of total sources to retrieve
+ * @param {number} textWeight - Weight for text results (0.0-1.0)
+ * @param {number} imageWeight - Weight for image results (0.0-1.0)
+ * @param {string} searchStrategy - Search strategy to use
+ * @param {boolean} includeImages - Whether to include image results
+ * @returns {Promise<Object>} The multimodal response data as a JSON object
+ * @throws {Error} If the API call fails after retries
+ */
+export const submitMultimodalQuery = async (
+  question, 
+  modelConfig = {}, 
+  maxSources = 5, 
+  textWeight = 0.7, 
+  imageWeight = 0.3, 
+  searchStrategy = 'multimodal',
+  includeImages = true,
+  useReranking = true,
+  rerankerModel = 'BAAI/bge-reranker-base'
+) => {
+  try {
+    console.log(`Submitting multimodal query: "${question}"`);
+    console.log(`Text weight: ${textWeight}, Image weight: ${imageWeight}`);
+    console.log(`Reranking: ${useReranking}, Model: ${rerankerModel}`);
+    
+    // Check server connection first
+    const serverAvailable = await checkServerConnection();
+    if (!serverAvailable) {
+      throw new Error('Backend server is not available. Please ensure the server is running on http://localhost:8000');
+    }
+    
+    const startTime = performance.now();
+    const response = await fetchWithRetry(`${API_BASE_URL}/api/v1/query/multimodal`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ 
+        question,
+        max_sources: maxSources,
+        text_weight: textWeight,
+        image_weight: imageWeight,
+        config_for_model: modelConfig,
+        search_strategy: searchStrategy,
+        include_images: includeImages,
+        use_reranking: useReranking,
+        reranker_model: rerankerModel
+      }),
+    }, 2); // Allow 2 retries for queries
+    
+    const requestTime = performance.now() - startTime;
+    console.log(`Multimodal query round-trip time: ${requestTime.toFixed(2)}ms`);
+    
+    const result = await handleApiResponse(response);
+    
+    console.log(`Multimodal query response received:
+- Answer length: ${result.answer ? result.answer.length : 0} characters
+- Response time: ${result.query_time_ms}ms
+- Retrieval time: ${result.retrieval_time_ms}ms
+- LLM time: ${result.llm_time_ms}ms
+- Model used: ${result.model}
+- Text sources: ${result.num_text_sources}
+- Image sources: ${result.num_image_sources}
+- Average relevance: ${result.average_relevance}
+`);
+    
+    return result;
+    
+  } catch (error) {
+    console.error(`Error submitting multimodal query "${question}":`, error.message);
+    throw error;
+  }
+};
+
+/**
+ * Get VLM configuration and available models
+ * @returns {Promise<Object>} VLM configuration
+ */
+export const getVLMConfig = async () => {
+  if (!await checkServerConnection()) {
+    throw new Error('Backend server is not available');
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/vlm`, {
+      method: 'GET',
+    });
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error('Failed to get VLM config:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update VLM provider
+ * @param {string} provider - VLM provider (ollama, openai, gemini, huggingface)
+ * @returns {Promise<Object>} Update result
+ */
+export const updateVLMProvider = async (provider) => {
+  if (!await checkServerConnection()) {
+    throw new Error('Backend server is not available');
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/vlm/provider`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ provider }),
+    });
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error('Failed to update VLM provider:', error);
+    throw error;
+  }
+};
+
+/**
+ * Update VLM model
+ * @param {string} model - VLM model name
+ * @returns {Promise<Object>} Update result
+ */
+export const updateVLMModel = async (model) => {
+  if (!await checkServerConnection()) {
+    throw new Error('Backend server is not available');
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/vlm/model`, {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+      },
+      body: JSON.stringify({ model }),
+    });
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error('Failed to update VLM model:', error);
     throw error;
   }
 };

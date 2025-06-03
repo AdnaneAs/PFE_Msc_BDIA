@@ -15,11 +15,15 @@ import {
   clearApiKey,
   getRerankerConfig,
   toggleReranking,
-  clearModelsCache
+  clearModelsCache,
+  getVLMConfig,
+  updateVLMProvider,
+  updateVLMModel
 } from '../services/api';
 import ModelSelectionSection from './config/ModelSelectionSection';
 import SearchConfigurationSection from './config/SearchConfigurationSection';
 import BGERerankerSection from './config/BGERerankerSection';
+import VLMSelectionSection from './config/VLMSelectionSection';
 
 const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
   const [config, setConfig] = useState(null);
@@ -31,11 +35,13 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
     gemini: '',
     huggingface: ''
   });
-  
-  // BGE Reranking states
+    // BGE Reranking states
   const [rerankerConfig, setRerankerConfig] = useState(null);
   const [useReranking, setUseReranking] = useState(true);
-  const [rerankerModel, setRerankerModel] = useState('BAAI/bge-reranker-base');useEffect(() => {
+  const [rerankerModel, setRerankerModel] = useState('BAAI/bge-reranker-base');
+  
+  // VLM states
+  const [vlmConfig, setVlmConfig] = useState(null);useEffect(() => {
     if (isOpen) {
       loadConfiguration();
     } else {
@@ -52,13 +58,13 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
         setLoading(true);
       }
         setError(null); // Clear any previous errors
-      
-      // Load configuration, available models, API keys status, and reranker config
-      const [configData, availableModels, apiKeysStatus, rerankerConfigData] = await Promise.all([
+        // Load configuration, available models, API keys status, reranker config, and VLM config
+      const [configData, availableModels, apiKeysStatus, rerankerConfigData, vlmConfigData] = await Promise.all([
         getSystemConfiguration(),
         getAvailableLLMModels(),
         getApiKeysStatus(),
-        getRerankerConfig()
+        getRerankerConfig(),
+        getVLMConfig()
       ]);
       
       // Update all provider models with dynamic data
@@ -75,9 +81,9 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
           }
         });
       }
-      
-      setConfig(configData);
+        setConfig(configData);
       setRerankerConfig(rerankerConfigData);
+      setVlmConfig(vlmConfigData.vlm);
       
       // Set reranking states from configuration
       setUseReranking(rerankerConfigData.reranking_enabled_by_default);
@@ -223,6 +229,21 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
     }
   };
 
+  // VLM configuration handlers
+  const handleVLMProviderChange = async (provider) => {
+    return handleConfigUpdate(
+      () => updateVLMProvider(provider),
+      `VLM provider changed to ${provider}`
+    );
+  };
+
+  const handleVLMModelChange = async (model) => {
+    return handleConfigUpdate(
+      () => updateVLMModel(model),
+      `VLM model changed to ${model}`
+    );
+  };
+
   if (!isOpen) return null;
 
   return (
@@ -296,6 +317,13 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
                 rerankerModel={rerankerModel}
                 onRerankingToggle={handleRerankingToggle}
                 onRerankerModelChange={handleRerankerModelChange}
+                disabled={saving}
+              />              {/* VLM Selection Section */}
+              <VLMSelectionSection
+                vlmConfig={vlmConfig}
+                onVLMProviderChange={handleVLMProviderChange}
+                onVLMModelChange={handleVLMModelChange}
+                onRefreshModels={handleRefreshModels}
                 disabled={saving}
               />
             </div>

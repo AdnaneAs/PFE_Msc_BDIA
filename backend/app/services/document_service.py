@@ -19,6 +19,8 @@ from app.database.db_setup import (
 from app.services.embedding_service import generate_embedding, generate_embeddings
 from app.services.vector_db_service import add_documents
 from app.services.llamaparse_service import parse_document, parse_document_with_images
+from app.services.image_processing_service import process_document_images, generate_image_descriptions, prepare_image_chunks_for_vectorization
+from app.services.vector_db_service import add_image_documents
 
 # For CSV/Excel parsing
 import pandas as pd
@@ -215,8 +217,13 @@ SELECT COUNT(*) FROM {table_name};"""
         logger.info(f"Generated {len(embeddings)} embeddings for document {doc_id} using model '{model_name}'")
         logger.info(f"Storing chunks with metadata: {chunk_metadatas}")
         
-        # Store in model-specific vector database collection
+        # Store text chunks in vector database
         add_documents(chunks, embeddings, chunk_metadatas, model_name=model_name)
+        
+        # Process images if any were extracted
+        if image_paths:
+            await process_document_images_pipeline(doc_id, image_paths, model_name, original_filename)
+        
         await update_document_status(
             doc_id, "completed", processed_at=datetime.now().isoformat(), chunk_count=len(chunks)
         )
@@ -295,4 +302,69 @@ async def handle_document_upload(
         "message": f"File received, processing started.",
         "doc_id": doc_id,
         "status": "pending"
-    } 
+    }
+
+async def process_document_images_pipeline(doc_id: str, image_paths: List[str], model_name: str, original_filename: str):
+    """
+    Complete pipeline for processing document images with VLM
+    
+    Args:
+        doc_id: Document ID
+        image_paths: List of extracted image paths
+        model_name: Embedding model name
+        original_filename: Original document filename
+    """
+    try:
+        logger.info(f"Starting image processing pipeline for document {doc_id} with {len(image_paths)} images")
+        
+        # Step 1: Process image metadata
+        image_metadatas = process_document_images(doc_id, image_paths)
+        if not image_metadatas:
+            logger.warning(f"No valid images found for document {doc_id}")
+            return
+        
+        # Step 2: Generate VLM descriptions
+        # Get VLM configuration from settings (or use defaults)
+        vlm_config = await get_vlm_config_from_settings()
+        enhanced_metadatas = await generate_image_descriptions(image_metadatas, vlm_config)
+        
+        # Step 3: Prepare for vectorization
+        descriptions, storage_metadatas = prepare_image_chunks_for_vectorization(enhanced_metadatas)
+        if not descriptions:
+            logger.warning(f"No valid descriptions generated for document {doc_id}")
+            return
+        
+        # Add original filename to metadata
+        for metadata in storage_metadatas:
+            metadata["original_filename"] = original_filename
+            metadata["embedding_model"] = model_name
+        
+        # Step 4: Generate embeddings for descriptions
+        from app.services.embedding_service import generate_embeddings
+        embeddings = generate_embeddings(descriptions)
+        
+        # Step 5: Store in image vector collection
+        add_image_documents(descriptions, embeddings, storage_metadatas, model_name=model_name)
+        
+        logger.info(f"Successfully processed {len(descriptions)} images for document {doc_id}")
+        
+    except Exception as e:
+        logger.error(f"Error in image processing pipeline for document {doc_id}: {str(e)}")
+        # Don't fail the entire document processing if image processing fails
+        
+async def get_vlm_config_from_settings() -> Dict[str, Any]:
+    """Get VLM configuration from user settings"""
+    try:
+        from app.services.settings_service import load_settings
+        settings = load_settings()
+        
+        return {
+            "provider": settings.get("vlm_provider", "ollama"),
+            "model": settings.get("vlm_model", "llava:latest")
+        }
+    except Exception as e:
+        logger.warning(f"Could not load VLM settings, using defaults: {e}")
+        return {
+            "provider": "ollama",
+            "model": "llava:latest"
+        }
