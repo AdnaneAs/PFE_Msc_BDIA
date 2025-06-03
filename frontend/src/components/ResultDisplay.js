@@ -340,8 +340,19 @@ const ResultDisplay = ({ result }) => {
           <FiFileText className="mr-1" />
           Text Content
         </div>
-        <div className="text-sm text-gray-700 bg-gray-50 p-3 rounded whitespace-pre-wrap">
-          {content}
+        <div className="text-sm text-gray-700 bg-gray-50 p-3 rounded whitespace-pre-wrap relative">
+          {/* Simple highlighting for better readability */}
+          <div 
+            className="leading-relaxed"
+            style={{
+              background: 'linear-gradient(90deg, rgba(34,197,94,0.1) 0%, rgba(59,130,246,0.1) 100%)',
+              padding: '2px 4px',
+              borderRadius: '2px',
+              border: '1px solid rgba(34,197,94,0.2)'
+            }}
+          >
+            {content}
+          </div>
         </div>
       </div>
     );
@@ -409,11 +420,17 @@ const ResultDisplay = ({ result }) => {
                       <h4 className="font-medium text-gray-800">
                         Chunk {chunk.chunk_index + 1} of {chunkData.chunks.length}
                       </h4>
-                      {chunk.metadata?.relevance_score && (
-                        <span className="px-2 py-1 bg-green-100 text-green-800 text-xs rounded">
-                          Relevance: {(chunk.metadata.relevance_score).toFixed(1)}%
-                        </span>
-                      )}
+                      <div className="flex items-center space-x-2">
+                        {chunk.metadata?.relevance_score && (
+                          <span className={`px-3 py-1 text-sm font-medium rounded-full ${
+                            chunk.metadata.relevance_score >= 70 ? 'bg-green-100 text-green-800' :
+                            chunk.metadata.relevance_score >= 50 ? 'bg-yellow-100 text-yellow-800' :
+                            'bg-orange-100 text-orange-800'
+                          }`}>
+                            {chunk.metadata.relevance_score.toFixed(0)}% relevance
+                          </span>
+                        )}
+                      </div>
                     </div>
                     
                     {/* Render actual chunk content */}
@@ -628,36 +645,73 @@ const ResultDisplay = ({ result }) => {
             <span className="ml-2 text-xs text-blue-500 italic">• Click to view content</span>
           </h3>
           <div className="bg-gray-50 rounded-md p-2 max-h-[150px] overflow-y-auto">
-            {renderedSources.map((source, idx) => (
-              <div 
-                key={idx} 
-                className={`text-sm p-2 hover:bg-blue-50 rounded flex items-center justify-between cursor-pointer transition-colors border border-transparent hover:border-blue-200 ${
-                  source.sourceType === 'image' ? 'bg-purple-50 hover:bg-purple-100 hover:border-purple-200' : ''
-                }`}
-                onClick={() => handleSourceClick(source)}
-              >
-                <div className="flex items-center">
-                  {source.sourceType === 'image' ? (
-                    <FiImage className="mr-2 text-purple-500" />
-                  ) : (
-                    <FiFileText className="mr-2 text-blue-500" />
-                  )}
-                  <span className={`font-medium ${
-                    source.sourceType === 'image' ? 'text-purple-700 hover:text-purple-800' : 'text-blue-700 hover:text-blue-800'
-                  }`}>
-                    {source.filename}
-                  </span>
-                  {source.sourceType === 'image' && (
-                    <span className="ml-2 text-xs text-purple-600 bg-purple-200 px-1 rounded">IMG</span>
+            {renderedSources.map((source, idx) => {
+              // Calculate average relevance score for this source
+              const relevanceScores = source.chunks?.map(chunk => chunk.relevance_score || 0).filter(score => score > 0) || [];
+              const avgRelevance = relevanceScores.length > 0 ? relevanceScores.reduce((a, b) => a + b, 0) / relevanceScores.length : 0;
+              const maxRelevance = relevanceScores.length > 0 ? Math.max(...relevanceScores) : 0;
+              
+              return (
+                <div 
+                  key={idx} 
+                  className={`text-sm p-2 hover:bg-blue-50 rounded cursor-pointer transition-colors border border-transparent hover:border-blue-200 ${
+                    source.sourceType === 'image' ? 'bg-purple-50 hover:bg-purple-100 hover:border-purple-200' : ''
+                  }`}
+                  onClick={() => handleSourceClick(source)}
+                >
+                  <div className="flex items-center justify-between">
+                    <div className="flex items-center">
+                      {source.sourceType === 'image' ? (
+                        <FiImage className="mr-2 text-purple-500" />
+                      ) : (
+                        <FiFileText className="mr-2 text-blue-500" />
+                      )}
+                      <span className={`font-medium ${
+                        source.sourceType === 'image' ? 'text-purple-700 hover:text-purple-800' : 'text-blue-700 hover:text-blue-800'
+                      }`}>
+                        {source.filename}
+                      </span>
+                      {source.sourceType === 'image' && (
+                        <span className="ml-2 text-xs text-purple-600 bg-purple-200 px-1 rounded">IMG</span>
+                      )}
+                    </div>
+                    <div className="flex items-center space-x-2">
+                      {maxRelevance > 0 && (
+                        <span className={`text-xs px-2 py-1 rounded font-medium ${
+                          maxRelevance >= 70 ? 'text-green-700 bg-green-100' :
+                          maxRelevance >= 50 ? 'text-yellow-700 bg-yellow-100' :
+                          'text-orange-700 bg-orange-100'
+                        }`}>
+                          {maxRelevance.toFixed(0)}%
+                        </span>
+                      )}
+                      <span className={`text-xs px-2 py-1 rounded ${
+                        source.sourceType === 'image' ? 'text-purple-500 bg-purple-200' : 'text-gray-500 bg-white'
+                      }`}>
+                        {source.count} chunks
+                      </span>
+                    </div>
+                  </div>
+                  {avgRelevance > 0 && (
+                    <div className="mt-1 flex items-center">
+                      <div className="flex-1 bg-gray-200 rounded-full h-1 mr-2">
+                        <div 
+                          className={`h-1 rounded-full ${
+                            avgRelevance >= 70 ? 'bg-green-500' :
+                            avgRelevance >= 50 ? 'bg-yellow-500' :
+                            'bg-orange-500'
+                          }`}
+                          style={{ width: `${Math.min(100, avgRelevance)}%` }}
+                        ></div>
+                      </div>
+                      <span className="text-xs text-gray-500">
+                        avg {avgRelevance.toFixed(0)}%
+                      </span>
+                    </div>
                   )}
                 </div>
-                <span className={`text-xs px-2 py-1 rounded ${
-                  source.sourceType === 'image' ? 'text-purple-500 bg-purple-200' : 'text-gray-500 bg-white'
-                }`}>
-                  {source.count} chunks used
-                </span>
-              </div>
-            ))}
+              );
+            })}
           </div>
         </div>
       )}
