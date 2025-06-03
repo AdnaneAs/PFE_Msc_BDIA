@@ -648,6 +648,7 @@ async def multimodal_query(request: MultimodalQueryRequest):
     try:
         logger.info(f"Received multimodal query: '{request.question}'")
         logger.info(f"Text weight: {request.text_weight}, Image weight: {request.image_weight}")
+        logger.info(f"Decomposition enabled: {request.use_decomposition}")
         
         # Generate embedding for the question
         metrics.mark_retrieval_start()
@@ -656,21 +657,89 @@ async def multimodal_query(request: MultimodalQueryRequest):
         current_model = get_current_model_info()
         model_name = current_model.get("name", "all-MiniLM-L6-v2")
         
-        query_embedding = generate_embedding(request.question)
-        
-        # Perform multimodal search
-        from app.services.vector_db_service import query_multimodal_documents
-        
-        multimodal_results = query_multimodal_documents(
-            query_embedding=query_embedding,
-            query_text=request.question,
-            n_results=request.max_sources or 5,
-            text_weight=request.text_weight or 0.7,
-            image_weight=request.image_weight or 0.3,
-            model_name=model_name,
-            use_reranking=request.use_reranking or True,
-            reranker_model=request.reranker_model or "BAAI/bge-reranker-base"
-        )
+        # Check if decomposition is enabled and apply it
+        if request.use_decomposition:
+            from app.services.query_decomposition_service import query_decomposer
+            
+            # Decompose the query if complex
+            is_complex, sub_queries = await query_decomposer.decompose_query(
+                request.question, 
+                request.config_for_model
+            )
+            
+            if is_complex and len(sub_queries) > 1:
+                logger.info(f"Complex multimodal query decomposed into {len(sub_queries)} sub-queries")
+                
+                # Process each sub-query through multimodal pipeline
+                all_text_sources = []
+                all_image_sources = []
+                all_documents = []
+                all_metadatas = []
+                
+                for sub_query in sub_queries:
+                    logger.info(f"Processing multimodal sub-query: {sub_query[:100]}...")
+                    
+                    query_embedding = generate_embedding(sub_query)
+                    
+                    # Perform multimodal search for this sub-query
+                    from app.services.vector_db_service import query_multimodal_documents
+                    
+                    sub_multimodal_results = query_multimodal_documents(
+                        query_embedding=query_embedding,
+                        query_text=sub_query,
+                        n_results=request.max_sources or 5,
+                        text_weight=request.text_weight or 0.7,
+                        image_weight=request.image_weight or 0.3,
+                        model_name=model_name,
+                        use_reranking=request.use_reranking or True,
+                        reranker_model=request.reranker_model or "BAAI/bge-reranker-base"
+                    )
+                    
+                    # Aggregate results
+                    all_documents.extend(sub_multimodal_results["documents"])
+                    all_metadatas.extend(sub_multimodal_results["metadatas"])
+                
+                # Create aggregated multimodal results
+                multimodal_results = {
+                    "documents": all_documents,
+                    "metadatas": all_metadatas
+                }
+                
+                logger.info(f"Decomposed multimodal search completed with {len(all_documents)} total results")
+            else:
+                logger.info("Simple multimodal query, processing without decomposition")
+                query_embedding = generate_embedding(request.question)
+                
+                # Perform standard multimodal search
+                from app.services.vector_db_service import query_multimodal_documents
+                
+                multimodal_results = query_multimodal_documents(
+                    query_embedding=query_embedding,
+                    query_text=request.question,
+                    n_results=request.max_sources or 5,
+                    text_weight=request.text_weight or 0.7,
+                    image_weight=request.image_weight or 0.3,
+                    model_name=model_name,
+                    use_reranking=request.use_reranking or True,
+                    reranker_model=request.reranker_model or "BAAI/bge-reranker-base"
+                )
+        else:
+            logger.info("Multimodal query decomposition disabled")
+            query_embedding = generate_embedding(request.question)
+            
+            # Perform standard multimodal search
+            from app.services.vector_db_service import query_multimodal_documents
+            
+            multimodal_results = query_multimodal_documents(
+                query_embedding=query_embedding,
+                query_text=request.question,
+                n_results=request.max_sources or 5,
+                text_weight=request.text_weight or 0.7,
+                image_weight=request.image_weight or 0.3,
+                model_name=model_name,
+                use_reranking=request.use_reranking or True,
+                reranker_model=request.reranker_model or "BAAI/bge-reranker-base"
+            )
         
         # Separate text and image results
         text_sources = []
@@ -717,14 +786,20 @@ async def multimodal_query(request: MultimodalQueryRequest):
         # Complete metrics tracking
         final_metrics = metrics.complete()
         
-        # Calculate average relevance
+        # Calculate average and top relevance
         all_relevance_scores = [
             metadata.get("relevance_score", 0.0) 
             for metadata in multimodal_results["metadatas"]
         ]
         avg_relevance = sum(all_relevance_scores) / len(all_relevance_scores) if all_relevance_scores else None
+        top_relevance = max(all_relevance_scores) if all_relevance_scores else None
+        
+        # Check if decomposition was applied
+        decomposition_applied = request.use_decomposition and 'is_complex' in locals() and is_complex
         
         logger.info(f"Multimodal query completed - Text sources: {len(text_sources)}, Image sources: {len(image_sources)}")
+        if decomposition_applied:
+            logger.info(f"Query was decomposed into {len(sub_queries)} sub-queries")
         
         return MultimodalQueryResponse(
             answer=answer,
@@ -737,7 +812,10 @@ async def multimodal_query(request: MultimodalQueryRequest):
             num_image_sources=len(image_sources),
             model=model_info,
             average_relevance=round(avg_relevance, 1) if avg_relevance else None,
-            reranking_used=request.use_reranking or True
+            top_relevance=round(top_relevance, 1) if top_relevance else None,
+            reranking_used=request.use_reranking or True,
+            is_decomposed=decomposition_applied,
+            decomposition_enabled=request.use_decomposition or False
         )
         
     except Exception as e:

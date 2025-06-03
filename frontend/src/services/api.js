@@ -1182,12 +1182,13 @@ export const submitMultimodalQuery = async (
   searchStrategy = 'multimodal',
   includeImages = true,
   useReranking = true,
-  rerankerModel = 'BAAI/bge-reranker-base'
+  rerankerModel = 'BAAI/bge-reranker-base',
+  useDecomposition = true
 ) => {
   try {
     console.log(`Submitting multimodal query: "${question}"`);
     console.log(`Text weight: ${textWeight}, Image weight: ${imageWeight}`);
-    console.log(`Reranking: ${useReranking}, Model: ${rerankerModel}`);
+    console.log(`Decomposition: ${useDecomposition}, Reranking: ${useReranking}, Model: ${rerankerModel}`);
     
     // Check server connection first
     const serverAvailable = await checkServerConnection();
@@ -1209,6 +1210,7 @@ export const submitMultimodalQuery = async (
         config_for_model: modelConfig,
         search_strategy: searchStrategy,
         include_images: includeImages,
+        use_decomposition: useDecomposition,
         use_reranking: useReranking,
         reranker_model: rerankerModel
       }),

@@ -373,7 +373,8 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
         searchStrategy,
         true, // includeImages = true
         useReranking,
-        rerankerModel
+        rerankerModel,
+        useDecomposition // Pass decomposition setting
       );
       
       // Update status

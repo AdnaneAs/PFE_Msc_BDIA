@@ -143,7 +143,11 @@ class MultimodalQueryResponse(BaseModel):
     model: Optional[str] = Field(None, description="LLM model used")
     search_strategy: str = Field("multimodal", description="Search strategy used")
     average_relevance: Optional[float] = Field(None, description="Average relevance score")
+    top_relevance: Optional[float] = Field(None, description="Top relevance score")
     reranking_used: Optional[bool] = Field(None, description="Whether BGE reranking was applied")
+    # Decomposition fields for multimodal queries
+    is_decomposed: Optional[bool] = Field(None, description="Whether the query was decomposed")
+    decomposition_enabled: Optional[bool] = Field(None, description="Whether decomposition was enabled for this query")
 
 class VLMStatusResponse(BaseModel):
     is_processing: bool = Field(..., description="Whether VLM is currently processing")
@@ -162,6 +166,11 @@ class MultimodalQueryRequest(BaseModel):
     config_for_model: Optional[Dict[str, Any]] = Field({}, description="Configuration for the LLM model")
     search_strategy: Optional[str] = Field("multimodal", description="Search strategy to use")
     include_images: Optional[bool] = Field(True, description="Whether to include image results")
+    # Query decomposition parameter
+    use_decomposition: Optional[bool] = Field(
+        True,
+        description="Whether to use query decomposition for complex multimodal questions"
+    )
     # BGE Reranking parameters (enabled by default for +23.86% MAP improvement)
     use_reranking: Optional[bool] = Field(
         True,
