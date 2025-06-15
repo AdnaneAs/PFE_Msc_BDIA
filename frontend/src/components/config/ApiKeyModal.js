@@ -149,7 +149,7 @@ const ApiKeyModal = ({
 
           {providerInfo.link && (
             <div className="mb-4 p-3 bg-gray-50 rounded-md">
-              <p className="text-xs text-gray-600 mb-2">Don't have an API key?</p>
+              <p className="text-xs text-gray-600 mb-2">Don&apos;t have an API key?</p>
               <a 
                 href={providerInfo.link}
                 target="_blank"

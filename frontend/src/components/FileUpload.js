@@ -1,4 +1,5 @@
 import React, { useState, useEffect, useRef, useCallback } from 'react';
+import { motion } from 'framer-motion';
 import { uploadDocumentAsync, streamDocumentStatus, getDocumentStatus } from '../services/api';
 import { FiUpload, FiFile, FiCheck, FiX, FiLoader } from 'react-icons/fi';
 
@@ -672,35 +673,63 @@ const FileUpload = ({ onUploadComplete }) => {
   };
 
   return (
-    <div className="bg-white shadow-md rounded-lg p-6 mb-6">
-      <h2 className="text-xl font-semibold text-gray-800 mb-4">Upload Documents</h2>
-      
+    <motion.div
+      initial={{ opacity: 0, y: 40 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.8, ease: 'easeOut' }}
+      className={`relative mx-auto p-10 mt-12 transition-all duration-700 rounded-3xl shadow-2xl border border-purple-200 bg-white/30 backdrop-blur-lg overflow-hidden ${dragActive ? 'ring-4 ring-purple-400 scale-105' : ''}`}
+      style={{
+        background: 'rgba(255,255,255,0.22)',
+        boxShadow: '0 8px 32px 0 rgba(168,85,247,0.18)',
+        border: '1px solid rgba(168,85,247,0.18)',
+        backdropFilter: 'blur(18px)',
+        WebkitBackdropFilter: 'blur(18px)'
+      }}
+    >
+      {/* Animated glassmorphic background shapes */}
+      <motion.div
+        className="absolute w-[320px] h-[320px] left-[-120px] top-[-120px] z-0"
+        style={{ background: 'rgba(168,85,247,0.18)', borderRadius: '40px', filter: 'blur(8px)' }}
+        animate={{ x: [0, 40, 0], y: [0, 40, 0], rotate: [0, 20, 0] }}
+        transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <motion.div
+        className="absolute w-[180px] h-[180px] right-[-60px] bottom-[-60px] z-0"
+        style={{ background: 'rgba(255,255,255,0.18)', borderRadius: '40px', filter: 'blur(8px)' }}
+        animate={{ x: [0, -30, 0], y: [0, -30, 0], rotate: [0, -15, 0] }}
+        transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <h2 className="relative z-10 text-3xl font-extrabold text-purple-700 mb-8 drop-shadow animate-fade-in">Upload Documents</h2>
       {/* Drag & Drop Zone */}
-      <div 
-        className={`border-2 border-dashed rounded-lg p-8 mb-4 text-center transition-colors
-          ${dragActive ? 'border-blue-500 bg-blue-50' : 'border-gray-300 hover:border-gray-400'}`}
+      <motion.div
+        className={`relative z-10 border-2 border-dashed rounded-2xl p-12 mb-8 text-center transition-all duration-700 shadow-xl cursor-pointer overflow-hidden ${dragActive ? 'border-purple-500 bg-gradient-to-br from-purple-100 via-white to-purple-50 scale-105' : 'border-purple-200 bg-white/60 hover:border-purple-400'}`}
         onDragEnter={handleDrag}
         onDragLeave={handleDrag}
         onDragOver={handleDrag}
         onDrop={handleDrop}
+        onClick={handleButtonClick}
+        tabIndex={0}
+        onKeyDown={e => { if (e.key === 'Enter') handleButtonClick(); }}
+        style={{ minHeight: 180, ...dragActive ? { boxShadow: '0 0 40px 0 rgba(168,85,247,0.15)' } : {} }}
+        initial={{ scale: 0.98, opacity: 0.8 }}
+        animate={{ scale: dragActive ? 1.04 : 1, opacity: 1 }}
+        transition={{ duration: 0.5 }}
       >
-        <div className="flex flex-col items-center justify-center">
-          <FiUpload className="text-4xl text-blue-500 mb-3" />
-          <p className="text-gray-700 mb-2">
-            Drag and drop your files here, or{" "}
-            <button
-              type="button"
-              className="text-blue-500 hover:text-blue-700 font-medium"
-              onClick={handleButtonClick}
-            >
-              browse
-            </button>
-          </p>
-          <p className="text-sm text-gray-500">
-            Supported formats: PDF, DOCX, TXT, CSV, XLS, XLSX (No file size limit)
-          </p>
-        </div>
-        
+        <motion.div
+          className="flex flex-col items-center justify-center"
+          initial={{ opacity: 0, y: 20 }}
+          animate={{ opacity: 1, y: 0 }}
+          transition={{ duration: 0.7 }}
+        >
+          <motion.div
+            animate={dragActive ? { scale: [1, 1.15, 1], rotate: [0, 10, -10, 0] } : { scale: 1, rotate: 0 }}
+            transition={{ duration: 1, repeat: dragActive ? Infinity : 0, repeatType: 'reverse' }}
+          >
+            <FiUpload className={`mb-3 text-6xl ${dragActive ? 'text-purple-500' : 'text-purple-400 transition-colors duration-300'}`} />
+          </motion.div>
+          <p className="text-lg font-bold text-purple-700 mb-2 drop-shadow animate-fade-in">Drag & drop files here or <span className="text-purple-600 underline cursor-pointer">browse</span></p>
+          <p className="text-sm text-purple-400">Supported: PDF, DOCX, TXT, CSV, Images</p>
+        </motion.div>
         <input
           ref={fileInputRef}
           type="file"
@@ -709,48 +738,52 @@ const FileUpload = ({ onUploadComplete }) => {
           onChange={handleFileChange}
           className="hidden"
         />
-      </div>
-        {/* Selected Files Info */}
+      </motion.div>
+      {/* Selected Files Info */}
       {files.length > 0 && (
-        <div className="mb-4">
-          <div className="flex justify-between items-center mb-2">
-            <h3 className="text-sm font-medium text-gray-700">
+        <motion.div className="mb-8 relative z-10" initial={{ opacity: 0, y: 20 }} animate={{ opacity: 1, y: 0 }} transition={{ duration: 0.7 }}>
+          <div className="flex justify-between items-center mb-3">
+            <h3 className="text-md font-bold text-purple-700">
               {files.length} file{files.length !== 1 ? 's' : ''} selected
             </h3>
             <button
               type="button"
               onClick={clearAllFiles}
-              className="text-xs text-red-500 hover:text-red-700"
+              className="text-xs text-purple-400 hover:text-red-500 font-semibold transition-colors"
               disabled={uploading}
             >
               Clear All
             </button>
           </div>
-          <div className="space-y-2">
+          <div className="space-y-3">
             {files.map((file, index) => (
-              <div key={index} className="flex items-center p-3 bg-gray-50 rounded-md">
-                <div className="w-10 h-10 flex items-center justify-center bg-blue-100 rounded-md mr-3">
-                  <FiFile className="text-blue-600" />
+              <motion.div
+                key={index}
+                className="flex items-center p-4 rounded-2xl shadow-lg border border-purple-100 bg-white/80 backdrop-blur transition-all duration-300 hover:scale-[1.025] hover:shadow-2xl"
+                initial={{ opacity: 0, x: -20 }}
+                animate={{ opacity: 1, x: 0 }}
+                transition={{ delay: 0.1 * index, duration: 0.5 }}
+              >
+                <div className="w-12 h-12 flex items-center justify-center bg-purple-100 rounded-2xl mr-4 shadow-inner animate-pulse">
+                  <FiFile className="text-purple-500 text-2xl" />
                 </div>
                 <div className="flex-1">
-                  <p className="font-medium text-gray-800">{file.name}</p>
-                  <p className="text-sm text-gray-500">
-                    {getFileTypeDisplay(file)} · {(file.size / 1024).toFixed(1)} KB
-                  </p>
+                  <div className="font-semibold text-purple-800">{file.name}</div>
+                  <div className="text-xs text-purple-400">{getFileTypeDisplay(file)} • {(file.size / 1024).toFixed(1)} KB</div>
                 </div>
                 <button
                   type="button"
                   onClick={() => removeFile(index)}
-                  className="p-1 text-gray-500 hover:text-red-500"
+                  className="ml-2 text-purple-300 hover:text-red-500 transition-colors text-xl"
                   title="Remove file"
                   disabled={uploading}
                 >
                   <FiX />
                 </button>
-              </div>
+              </motion.div>
             ))}
           </div>
-        </div>
+        </motion.div>
       )}
       
       {/* Error Message */}
@@ -890,7 +923,7 @@ const FileUpload = ({ onUploadComplete }) => {
                       {category} ({categoryEntries.length})
                     </div>
                     <div className="p-2 space-y-1">
-                      {categoryEntries.map((entry, index) => (
+                      {categoryEntries.map((entry) => (
                         <div 
                           key={entry.id} 
                           className={`p-2 rounded text-xs font-mono border-l-4 bg-white ${
@@ -928,55 +961,53 @@ const FileUpload = ({ onUploadComplete }) => {
       )}
       
       {/* Enhanced Upload/Control Buttons */}
-      <div className="flex justify-end space-x-3">
+      <div className="flex justify-end space-x-3 mt-10 relative z-10">
         {/* Stop processing button - only show when actively processing */}
         {processingActive && (
           <button
             type="button"
             onClick={stopAllProcessing}
-            className="px-4 py-2 rounded-md font-medium text-white bg-red-600 hover:bg-red-700 transition-colors flex items-center"
+            className="px-5 py-2 rounded-xl font-semibold text-white bg-gradient-to-r from-purple-500 to-pink-500 hover:from-pink-500 hover:to-purple-500 shadow-lg transition-all flex items-center animate-pulse"
             title="Stop all processing"
           >
-            <FiX className="mr-1" size={16} />
+            <FiX className="mr-2" size={18} />
             Stop Processing
           </button>
         )}
-        
-        {/* Main action button */}
         <button
           type="button"
           onClick={uploading && !processingActive ? resetUploadState : handleUpload}
           disabled={files.length === 0 && !uploading}
-          className={`px-4 py-2 rounded-md font-medium text-white transition-colors flex items-center ${
+          className={`px-6 py-2 rounded-xl font-bold text-white shadow-lg transition-all flex items-center text-lg focus:outline-none focus:ring-2 focus:ring-purple-400 focus:ring-offset-2 ${
             files.length === 0 && !uploading
-              ? 'bg-gray-400 cursor-not-allowed'
+              ? 'bg-gray-300 cursor-not-allowed'
               : uploading && !processingActive
-                ? 'bg-green-600 hover:bg-green-700'
+                ? 'bg-gradient-to-r from-green-400 to-green-600 hover:from-green-500 hover:to-green-700'
                 : uploading && processingActive
-                  ? 'bg-yellow-600 cursor-wait'
-                : 'bg-blue-600 hover:bg-blue-700'
+                  ? 'bg-gradient-to-r from-yellow-400 to-yellow-600 cursor-wait animate-pulse'
+                  : 'bg-gradient-to-r from-purple-500 to-pink-500 hover:from-pink-500 hover:to-purple-500'
           }`}
         >
           {uploading && processingActive ? (
             <>
-              <FiLoader className="mr-1 animate-spin" size={16} />
+              <FiLoader className="mr-2 animate-spin" size={20} />
               Processing...
             </>
           ) : uploading && !processingActive ? (
             <>
-              <FiCheck className="mr-1" size={16} />
+              <FiCheck className="mr-2" size={20} />
               Done
             </>
           ) : (
             <>
-              <FiUpload className="mr-1" size={16} />
+              <FiUpload className="mr-2" size={20} />
               Upload {files.length > 0 ? files.length : ''} Document{files.length !== 1 ? 's' : ''}
             </>
           )}
         </button>
       </div>
-    </div>
+    </motion.div>
   );
 };
 
-export default FileUpload;
+export default FileUpload;  

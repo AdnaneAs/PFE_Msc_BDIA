@@ -1,4 +1,5 @@
 import React, { useState, useEffect } from 'react';
+import { motion } from 'framer-motion';
 import { 
   submitQuery, 
   submitDecomposedQuery, 
@@ -27,8 +28,8 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
   // BGE Reranking states - new enhancement
   const [useReranking, setUseReranking] = useState(true); // Default enabled based on benchmark
   const [rerankerModel, setRerankerModel] = useState('BAAI/bge-reranker-base');
-  const [rerankerConfig, setRerankerConfig] = useState(null);
-  const [showRerankerDetails, setShowRerankerDetails] = useState(false);
+  // ...existing code...
+  // const [showRerankerDetails, setShowRerankerDetails] = useState(false); // removed unused
   
   // Multimodal query states - v0.3 enhancement
   const [useMultimodal, setUseMultimodal] = useState(false);
@@ -38,7 +39,6 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
   
   // Configuration state
   const [currentConfig, setCurrentConfig] = useState(null);
-  const [configVersion, setConfigVersion] = useState(0); // Add version to force refresh
   
   // Function to refresh configuration
   const refreshConfiguration = async () => {
@@ -56,7 +56,6 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
       // Also refresh reranker configuration
       try {
         const rerankerConfig = await getRerankerConfig();
-        setRerankerConfig(rerankerConfig);
         setUseReranking(rerankerConfig.reranking_enabled_by_default);
         setRerankerModel(rerankerConfig.default_reranker_model);
         console.log("Reranker config refreshed:", rerankerConfig);
@@ -73,7 +72,7 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
   // Fetch current configuration on mount and when version changes
   useEffect(() => {
     refreshConfiguration();
-  }, [configVersion]);
+  }, []);
 
   // Listen for configuration changes from settings panel
   useEffect(() => {
@@ -88,7 +87,6 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
     const fetchRerankerConfig = async () => {
       try {
         const config = await getRerankerConfig();
-        setRerankerConfig(config);
         
         // Update reranking states with configuration
         setUseReranking(config.reranking_enabled_by_default);
@@ -103,13 +101,9 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
     fetchRerankerConfig();
   }, []);
 
-  // Fetch LLM status initially and after queries
+  // Fetch LLM status only once on mount
   useEffect(() => {
     fetchLlmStatus();
-    // Set up interval to fetch status every 10 seconds
-    const intervalId = setInterval(fetchLlmStatus, 10000);
-    // Clean up interval
-    return () => clearInterval(intervalId);
   }, []);
   
   const fetchLlmStatus = async () => {
@@ -439,8 +433,33 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
   };
 
   return (
-    <div className="bg-white shadow-md rounded-lg p-6 mb-6">
-      <h2 className="text-xl font-semibold text-gray-800 mb-4">Query Documents</h2>
+    <motion.div
+      initial={{ opacity: 0, y: 40 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.8, ease: 'easeOut' }}
+      className="w-full max-w-2xl mx-auto mt-12 p-10 bg-white/70 rounded-3xl shadow-2xl border border-purple-200 backdrop-blur-lg relative overflow-hidden"
+      style={{
+        background: 'rgba(255,255,255,0.22)',
+        boxShadow: '0 8px 32px 0 rgba(168,85,247,0.18)',
+        border: '1px solid rgba(168,85,247,0.18)',
+        backdropFilter: 'blur(18px)',
+        WebkitBackdropFilter: 'blur(18px)'
+      }}
+    >
+      {/* Animated glassmorphic background shapes */}
+      <motion.div
+        className="absolute w-[220px] h-[220px] left-[-80px] top-[-80px] z-0"
+        style={{ background: 'rgba(168,85,247,0.18)', borderRadius: '40px', filter: 'blur(8px)' }}
+        animate={{ x: [0, 30, 0], y: [0, 30, 0], rotate: [0, 15, 0] }}
+        transition={{ duration: 8, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <motion.div
+        className="absolute w-[120px] h-[120px] right-[-40px] bottom-[-40px] z-0"
+        style={{ background: 'rgba(255,255,255,0.18)', borderRadius: '40px', filter: 'blur(8px)' }}
+        animate={{ x: [0, -20, 0], y: [0, -20, 0], rotate: [0, -10, 0] }}
+        transition={{ duration: 10, repeat: Infinity, ease: 'easeInOut' }}
+      />
+      <h2 className="relative z-10 text-3xl font-extrabold text-purple-700 mb-8 drop-shadow animate-fade-in">Query Documents</h2>
       
       {/* Current Configuration Summary */}
       {currentConfig && (
@@ -723,7 +742,7 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
           <div className="space-y-3">
             <div>
               <p className="text-xs text-purple-700 font-medium">Original Query:</p>
-              <p className="text-sm text-purple-600 italic">"{decompositionResult.original_query}"</p>
+              <p className="text-sm text-purple-600 italic">&quot;{decompositionResult.original_query}&quot;</p>
             </div>
             <div>
               <p className="text-xs text-purple-700 font-medium">Sub-queries Generated:</p>
@@ -767,7 +786,7 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
           )}
         </div>
       )}
-    </div>
+    </motion.div>
   );
 };
 

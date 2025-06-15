@@ -3,7 +3,7 @@ import { getDocuments, deleteDocument, getDocumentsVectorizationStatus, getSyste
 import { FiFileText, FiTrash2, FiRefreshCw, FiAlertCircle, FiClock, FiCheckCircle, FiX, FiDatabase, FiChevronDown, FiChevronRight, FiImage, FiSearch, FiChevronLeft, FiFilter, FiLayers } from 'react-icons/fi';
 import DocumentImages from './DocumentImages';
 
-const DocumentList = ({ refreshTrigger }) => {
+const DocumentList = ({ refreshTrigger, active }) => {
   const [documents, setDocuments] = useState([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
@@ -67,11 +67,13 @@ const DocumentList = ({ refreshTrigger }) => {
     }
   }, []);
 
-  // Load documents and models on mount and when refreshTrigger changes
+  // Load documents and models only when section is active
   useEffect(() => {
-    fetchAvailableModels();
-    fetchDocuments();
-  }, [fetchAvailableModels, fetchDocuments, refreshTrigger]);
+    if (active) {
+      fetchAvailableModels();
+      fetchDocuments();
+    }
+  }, [fetchAvailableModels, fetchDocuments, refreshTrigger, active]);
 
   // Refresh documents when filter options change
   useEffect(() => {
@@ -266,15 +268,7 @@ const DocumentList = ({ refreshTrigger }) => {
     setCurrentPage(1);
   }, [searchTerm]);
 
-  // Handle sort change
-  const handleSort = (column) => {
-    if (sortBy === column) {
-      setSortOrder(sortOrder === 'asc' ? 'desc' : 'asc');
-    } else {
-      setSortBy(column);
-      setSortOrder('asc');
-    }
-  };
+
 
   // Clear search
   const clearSearch = () => {
@@ -420,7 +414,7 @@ const DocumentList = ({ refreshTrigger }) => {
                   Showing {filteredAndSortedDocuments.length} of {documents.length} documents
                   {filteredAndSortedDocuments.length !== documents.length && (
                     <span className="ml-2 text-blue-600">
-                      (filtered by "{searchTerm}")
+                    (filtered by &quot;{searchTerm}&quot;)
                     </span>
                   )}
                 </>

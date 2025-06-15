@@ -1,4 +1,4 @@
-import React, { useState, useEffect } from 'react';
+import React, { useState, useEffect, useRef } from 'react';
 import { 
   getSystemConfiguration,
   updateEmbeddingModel,
@@ -8,8 +8,6 @@ import {
   updateMaxSources,
   toggleQueryDecomposition,
   getAvailableLLMModels,
-  refreshAvailableModels,
-  getModelsForProvider,
   storeApiKey,
   getApiKeysStatus,
   clearApiKey,
@@ -30,18 +28,20 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState(null);
   const [saving, setSaving] = useState(false);
-  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);  const [apiKeys, setApiKeys] = useState({
+  const [hasLoadedOnce, setHasLoadedOnce] = useState(false);
+  const [apiKeys, setApiKeys] = useState({
     openai: '',
     gemini: '',
     huggingface: ''
   });
-    // BGE Reranking states
+  // BGE Reranking states
   const [rerankerConfig, setRerankerConfig] = useState(null);
   const [useReranking, setUseReranking] = useState(true);
   const [rerankerModel, setRerankerModel] = useState('BAAI/bge-reranker-base');
-  
   // VLM states
-  const [vlmConfig, setVlmConfig] = useState(null);useEffect(() => {
+  const [vlmConfig, setVlmConfig] = useState(null);
+
+  useEffect(() => {
     if (isOpen) {
       loadConfiguration();
     } else {
@@ -50,15 +50,62 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
         setLoading(false);
       }
     }
-    // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [isOpen]);const loadConfiguration = async () => {
-    try {
-      // Only show loading spinner on first load
-      if (!hasLoadedOnce) {
+    // ...
+  }, [isOpen]);
+// ...existing code...
+
+  // Section loading indicators
+  const [sectionLoading, setSectionLoading] = useState({
+    config: false,
+    reranker: false,
+    vlm: false,
+    apiKeys: false
+  });
+  const refreshId = useRef(0);
+
+  // In-memory cache for configuration data
+  let configCache = {
+    config: null,
+    rerankerConfig: null,
+    vlmConfig: null,
+    apiKeys: null,
+    timestamp: 0
+  };
+  const CACHE_TTL = 60 * 1000; // 1 minute
+
+  // On open: show cached config instantly, then refresh in background
+  useEffect(() => {
+    if (isOpen) {
+      let usedCache = false;
+      const now = Date.now();
+      if (
+        configCache.config &&
+        configCache.timestamp &&
+        now - configCache.timestamp < CACHE_TTL
+      ) {
+        setConfig(configCache.config);
+        setRerankerConfig(configCache.rerankerConfig);
+        setVlmConfig(configCache.vlmConfig);
+        setApiKeys(configCache.apiKeys);
+        setLoading(false);
+        setHasLoadedOnce(true);
+        usedCache = true;
+      } else {
         setLoading(true);
       }
-        setError(null); // Clear any previous errors
-        // Load configuration, available models, API keys status, reranker config, and VLM config
+      // Always refresh in background
+      const thisRefresh = ++refreshId.current;
+      backgroundRefresh(thisRefresh, usedCache);
+    } else {
+      if (hasLoadedOnce) setLoading(false);
+    }
+    // ...
+  }, [isOpen]);
+
+  // Background refresh function
+  const backgroundRefresh = async (thisRefresh, usedCache) => {
+    if (usedCache) setSectionLoading({ config: true, reranker: true, vlm: true, apiKeys: true });
+    try {
       const [configData, availableModels, apiKeysStatus, rerankerConfigData, vlmConfigData] = await Promise.all([
         getSystemConfiguration(),
         getAvailableLLMModels(),
@@ -66,14 +113,10 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
         getRerankerConfig(),
         getVLMConfig()
       ]);
-      
-      // Update all provider models with dynamic data
       if (configData.model_selection?.llm?.available_providers && availableModels) {
         Object.keys(availableModels).forEach(provider => {
           if (configData.model_selection.llm.available_providers[provider]) {
             configData.model_selection.llm.available_providers[provider].models = availableModels[provider];
-            
-            // Update status based on availability
             if (provider === 'ollama') {
               const hasModels = availableModels[provider] && availableModels[provider].length > 0;
               configData.model_selection.llm.available_providers[provider].status = hasModels ? 'available' : 'unavailable';
@@ -81,42 +124,52 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
           }
         });
       }
+      if (thisRefresh === refreshId.current) {
         setConfig(configData);
-      setRerankerConfig(rerankerConfigData);
-      setVlmConfig(vlmConfigData.vlm);
-      
-      // Set reranking states from configuration
-      setUseReranking(rerankerConfigData.reranking_enabled_by_default);
-      setRerankerModel(rerankerConfigData.default_reranker_model);
-      
-      // Update API keys state based on what's stored on backend (but don't expose actual keys)
-      setApiKeys(prev => ({
-        openai: apiKeysStatus.openai ? '***configured***' : '',
-        gemini: apiKeysStatus.gemini ? '***configured***' : '',
-        huggingface: apiKeysStatus.huggingface ? '***configured***' : ''
-      }));
-      
-      setHasLoadedOnce(true);
+        setRerankerConfig(rerankerConfigData);
+        setVlmConfig(vlmConfigData.vlm);
+        setApiKeys({
+          openai: apiKeysStatus.openai ? '***configured***' : '',
+          gemini: apiKeysStatus.gemini ? '***configured***' : '',
+          huggingface: apiKeysStatus.huggingface ? '***configured***' : ''
+        });
+        setHasLoadedOnce(true);
+        setLoading(false);
+        setSectionLoading({ config: false, reranker: false, vlm: false, apiKeys: false });
+        configCache = {
+          config: configData,
+          rerankerConfig: rerankerConfigData,
+          vlmConfig: vlmConfigData.vlm,
+          apiKeys: {
+            openai: apiKeysStatus.openai ? '***configured***' : '',
+            gemini: apiKeysStatus.gemini ? '***configured***' : '',
+            huggingface: apiKeysStatus.huggingface ? '***configured***' : ''
+          },
+          timestamp: Date.now()
+        };
+      }
     } catch (err) {
       setError('Failed to load configuration: ' + err.message);
-    } finally {
-      // Only turn off loading if we were showing it
-      if (!hasLoadedOnce) {
-        setLoading(false);
-      }
+      setSectionLoading({ config: false, reranker: false, vlm: false, apiKeys: false });
     }
-  };  const handleConfigUpdate = async (updateFunction, successMessage) => {
+  };
+
+  // Legacy: for manual refresh (retry button)
+  const loadConfiguration = async () => {
+    setLoading(true);
+    setError(null);
+    await backgroundRefresh(++refreshId.current, false);
+    setLoading(false);
+  };
+
+  const handleConfigUpdate = async (updateFunction, successMessage) => {
     try {
       setSaving(true);
       await updateFunction();
-      await loadConfiguration(); // Refresh configuration - won't show loading spinner
-      
-      // Notify parent component about configuration change
+      await backgroundRefresh(++refreshId.current, false);
       if (onConfigurationChange) {
         onConfigurationChange();
       }
-      
-      // Show success message
       if (successMessage) {
         console.log(successMessage);
       }
@@ -292,7 +345,9 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
               </div>
             </div>
           ) : config ? (
-            <div className="space-y-8">              {/* Model Selection Section */}              <ModelSelectionSection
+            <div className="space-y-8">
+              {/* Model Selection Section */}
+              <ModelSelectionSection
                 config={config.model_selection}
                 onEmbeddingModelChange={handleEmbeddingModelChange}
                 onLLMProviderChange={handleLLMProviderChange}
@@ -301,6 +356,7 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
                 onRefreshModels={handleRefreshModels}
                 apiKeys={apiKeys}
                 disabled={saving}
+                loading={sectionLoading.config || false}
               />
 
               {/* Search Configuration Section */}
@@ -310,7 +366,8 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
                 onMaxSourcesChange={handleMaxSourcesChange}
                 onQueryDecompositionToggle={handleQueryDecompositionToggle}
                 disabled={saving}
-              />              {/* BGE Reranker Section */}
+              />
+              {/* BGE Reranker Section */}
               <BGERerankerSection
                 rerankerConfig={rerankerConfig}
                 useReranking={useReranking}
@@ -318,13 +375,16 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
                 onRerankingToggle={handleRerankingToggle}
                 onRerankerModelChange={handleRerankerModelChange}
                 disabled={saving}
-              />              {/* VLM Selection Section */}
+                loading={sectionLoading.reranker || false}
+              />
+              {/* VLM Selection Section */}
               <VLMSelectionSection
                 vlmConfig={vlmConfig}
                 onVLMProviderChange={handleVLMProviderChange}
                 onVLMModelChange={handleVLMModelChange}
                 onRefreshModels={handleRefreshModels}
                 disabled={saving}
+                loading={sectionLoading.vlm || false}
               />
             </div>
           ) : null}
@@ -354,6 +414,7 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
       </div>
     </div>
   );
-};
+}
 
 export default ConfigurationPanel;
+

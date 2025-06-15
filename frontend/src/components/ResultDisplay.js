@@ -1,8 +1,9 @@
 import React, { useState, useEffect, useRef } from 'react';
+import { motion } from 'framer-motion';
 import { FiClock, FiServer, FiDatabase, FiInfo, FiChevronDown, FiChevronUp, FiAlertTriangle, FiX, FiFileText, FiImage, FiGrid, FiLoader } from 'react-icons/fi';
 import { getDocumentChunks } from '../services/api';
 
-const ResultDisplay = ({ result }) => {
+const ResultDisplay = ({ result, isFullScreen = false, onCloseFullScreen, onRequestFullScreen }) => {
   const [showDebugInfo, setShowDebugInfo] = useState(false);
   const [isStreaming, setIsStreaming] = useState(false);
   const [displayedAnswer, setDisplayedAnswer] = useState('');
@@ -16,6 +17,28 @@ const ResultDisplay = ({ result }) => {
   
   // Ref to scroll to bottom of response when streaming
   const responseRef = useRef(null);
+  
+  // Extract variables from result
+  const query_time_ms = result?.query_time_ms || result?.total_query_time_ms;
+  const retrieval_time_ms = result?.retrieval_time_ms;
+  const llm_time_ms = result?.llm_time_ms;
+  const decomposition_time_ms = result?.decomposition_time_ms;
+  const synthesis_time_ms = result?.synthesis_time_ms;
+  const total_query_time_ms = result?.total_query_time_ms || result?.query_time_ms;
+  const is_decomposed = result?.is_decomposed;
+  const decomposed = result?.decomposed || result?.is_decomposed;
+  const search_strategy = result?.search_strategy;
+  const model = result?.model;
+  const num_sources = result?.num_sources || renderedSources?.length || 0;
+  const average_relevance = result?.average_relevance;
+  const top_relevance = result?.top_relevance;
+  
+  // Format time utility function
+  const formatTime = (timeMs) => {
+    if (timeMs === undefined || timeMs === null) return 'N/A';
+    if (timeMs < 1000) return `${timeMs.toFixed(0)}ms`;
+    return `${(timeMs / 1000).toFixed(2)}s`;
+  };
   
   // Check if response is currently streaming
   useEffect(() => {
@@ -93,7 +116,7 @@ const ResultDisplay = ({ result }) => {
       }, {});
       
       // Convert to array for rendering, separating text and image sources
-      const processedSources = Object.entries(groupedSources).map(([groupKey, chunks]) => {
+      const processedSources = Object.entries(groupedSources).map(([, chunks]) => {
         const sourceType = chunks[0].sourceType;
         const filename = chunks[0].displayFilename;
         
@@ -401,7 +424,7 @@ const ResultDisplay = ({ result }) => {
           </div>
           
           {/* Modal Body */}
-          <div className="p-4 overflow-y-auto max-h-[60vh]">
+          <div className="p-4 overflow-y-auto max-h-[70vh]">
             {loadingChunks ? (
               <div className="flex items-center justify-center py-8">
                 <FiLoader className="w-6 h-6 text-blue-500 animate-spin mr-2" />
@@ -543,42 +566,59 @@ const ResultDisplay = ({ result }) => {
     }
   }, [result]);
   
+  // Full-screen modal close handler
+  const handleFullScreenClose = (e) => {
+    e.stopPropagation();
+    if (onCloseFullScreen) onCloseFullScreen();
+  };
+
+  // Click to request full-screen (if not already in full-screen)
+  const handleRequestFullScreen = (e) => {
+    if (onRequestFullScreen && !isFullScreen) {
+      onRequestFullScreen();
+    }
+  };
+
   if (!result && !isLoading && !errorMessage) {
-    return (
+    const content = (
       <div className="bg-white shadow-md rounded-lg p-6 mb-6">
         <h2 className="text-xl font-semibold text-gray-800 mb-4">Results</h2>
         <p className="text-gray-600">Ask a question to see results from the documents</p>
       </div>
     );
+    if (isFullScreen) {
+      return (
+        <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-lg animate-fade-in">
+          <div className="relative w-full max-w-3xl mx-auto">
+            <button onClick={handleFullScreenClose} className="absolute top-4 right-4 z-10 p-2 bg-white/80 rounded-full shadow hover:bg-purple-100 transition-colors">
+              <FiX className="w-6 h-6 text-purple-700" />
+            </button>
+            {content}
+          </div>
+        </div>
+      );
+    }
+    return content;
   }
-  
-  const { 
-    query_time_ms, 
-    retrieval_time_ms, 
-    llm_time_ms, 
-    num_sources,
-    model,
-    search_strategy,
-    average_relevance,
-    top_relevance,
-    // Decomposed query specific fields
-    decomposed,
-    is_decomposed,
-    total_query_time_ms,
-    decomposition_time_ms,
-    synthesis_time_ms
-  } = result || {};
-  
-  // Format time values for display
-  const formatTime = (time) => {
-    if (time === undefined || time === null) return 'N/A';
-    if (time < 1000) return `${time}ms`;
-    return `${(time / 1000).toFixed(2)}s`;
-  };
-  
-  return (
-    <div className="bg-white shadow-md rounded-lg p-6 mb-6">
-      <h2 className="text-xl font-semibold text-gray-800 mb-4 flex items-center justify-between">
+
+  // --- Main content block (shared by normal and full-screen modal) ---
+  const mainContent = (
+    <motion.div
+      initial={{ opacity: 0, y: 20 }}
+      animate={{ opacity: 1, y: 0 }}
+      transition={{ duration: 0.5, ease: 'easeOut' }}
+      className={`w-full max-w-none mx-auto ${isFullScreen ? 'mt-0 min-h-[80vh] z-[101]' : 'mt-4'}`}
+      role="region"
+      aria-label="Result Display"
+    >
+      {/* Full-screen close button */}
+      {isFullScreen && (
+        <button onClick={handleFullScreenClose} className="absolute top-6 right-6 z-20 p-2 bg-white/80 rounded-full shadow hover:bg-purple-100 transition-colors">
+          <FiX className="w-7 h-7 text-purple-700" />
+        </button>
+      )}
+      
+      <h2 className="text-2xl font-bold text-purple-700 mb-6 flex items-center justify-between">
         <span>Results</span>
         {isLoading && (
           <span className="text-sm font-normal text-blue-500 flex items-center">
@@ -589,18 +629,18 @@ const ResultDisplay = ({ result }) => {
       
       {/* Loading indicator */}
       {isLoading && !errorMessage && (
-        <div className="flex items-center mb-3 p-2 bg-blue-50 rounded">
-          <div className="w-4 h-4 rounded-full bg-blue-500 mr-2 animate-pulse"></div>
+        <div className="flex items-center mb-6 p-4 bg-blue-50 rounded-lg border border-blue-200">
+          <div className="w-4 h-4 rounded-full bg-blue-500 mr-3 animate-pulse"></div>
           <span className="text-blue-700 font-medium">Processing your query...</span>
         </div>
       )}
       
       {/* Error message display */}
       {errorMessage && (
-        <div className="p-4 bg-red-50 border border-red-100 rounded-md text-red-800 mb-4 flex items-start">
-          <FiAlertTriangle className="mt-1 mr-2 flex-shrink-0" />
+        <div className="p-6 bg-red-50 border border-red-200 rounded-lg text-red-800 mb-6 flex items-start">
+          <FiAlertTriangle className="mt-1 mr-3 flex-shrink-0" />
           <div>
-            <h3 className="font-medium mb-1">Error Processing Query</h3>
+            <h3 className="font-medium mb-2">Error Processing Query</h3>
             <p>{errorMessage}</p>
           </div>
         </div>
@@ -608,8 +648,8 @@ const ResultDisplay = ({ result }) => {
       
       {/* Answer display */}
       {!errorMessage && (
-        <div className="mb-6">
-          <h3 className="font-medium text-gray-700 mb-2 flex items-center">
+        <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="font-semibold text-gray-800 mb-3 flex items-center">
             <span>Answer</span>
             {isStreaming && (
               <span className="ml-2 text-sm text-blue-500 flex items-center">
@@ -620,7 +660,7 @@ const ResultDisplay = ({ result }) => {
           </h3>
           <div 
             ref={responseRef}
-            className="p-4 bg-blue-50 rounded-md text-gray-800 whitespace-pre-line min-h-[120px] max-h-[400px] overflow-y-auto"
+            className="p-4 bg-blue-50 rounded-md text-gray-800 whitespace-pre-line min-h-[120px] max-h-[600px] overflow-y-auto border"
           >
             {displayedAnswer ? displayedAnswer : "No answer generated yet."}
             {isStreaming && <span className="inline-block w-2 h-4 bg-gray-800 ml-1 animate-pulse">|</span>}
@@ -630,9 +670,9 @@ const ResultDisplay = ({ result }) => {
       
       {/* Source summary - Enhanced for multimodal */}
       {renderedSources.length > 0 && (
-        <div className="mb-4">
-          <h3 className="font-medium text-gray-700 mb-2 flex items-center">
-            <FiDatabase className="mr-1" /> 
+        <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="font-semibold text-gray-800 mb-3 flex items-center">
+            <FiDatabase className="mr-2" /> 
             <span>Source Documents</span>
             <span className="ml-2 text-sm text-gray-500">
               ({renderedSources.filter(s => s.sourceType === 'text').length} text, {renderedSources.filter(s => s.sourceType === 'image').length} image files)
@@ -644,7 +684,7 @@ const ResultDisplay = ({ result }) => {
             )}
             <span className="ml-2 text-xs text-blue-500 italic">• Click to view content</span>
           </h3>
-          <div className="bg-gray-50 rounded-md p-2 max-h-[150px] overflow-y-auto">
+          <div className="bg-gray-50 rounded-md p-2 max-h-[250px] overflow-y-auto">
             {renderedSources.map((source, idx) => {
               // Calculate average relevance score for this source
               const relevanceScores = source.chunks?.map(chunk => chunk.relevance_score || 0).filter(score => score > 0) || [];
@@ -717,9 +757,9 @@ const ResultDisplay = ({ result }) => {
       )}
       
       {/* Performance metrics summary */}
-      <div className="mb-4 p-2 bg-gray-50 rounded-md">
+      <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-4">
         <div className="flex items-center justify-between">
-          <div className="text-xs text-gray-600 flex items-center space-x-3">
+          <div className="text-sm text-gray-600 flex items-center space-x-4">
             <span className="flex items-center">
               <FiServer className="mr-1" />
               {result?.model || 'Default Model'}
@@ -749,7 +789,7 @@ const ResultDisplay = ({ result }) => {
           
           <button 
             onClick={() => setShowDebugInfo(!showDebugInfo)}
-            className="text-xs px-2 py-1 bg-gray-200 hover:bg-gray-300 rounded text-gray-700 flex items-center"
+            className="text-sm px-3 py-1 bg-gray-100 hover:bg-gray-200 rounded text-gray-700 flex items-center transition-colors"
           >
             <FiInfo className="mr-1" />
             {showDebugInfo ? 'Hide Details' : 'Show Details'}
@@ -760,8 +800,8 @@ const ResultDisplay = ({ result }) => {
       
       {/* Enhanced Performance Metrics Panel */}
       {showDebugInfo && !errorMessage && (
-        <div className="mb-6 p-4 bg-gradient-to-r from-blue-50 to-indigo-50 border border-blue-200 rounded-lg">
-          <h3 className="font-semibold text-blue-800 mb-4 flex items-center text-sm">
+        <div className="mb-6 bg-white rounded-lg shadow-sm border border-gray-200 p-6">
+          <h3 className="font-semibold text-gray-800 mb-4 flex items-center">
             <FiInfo className="mr-2" /> Performance Analytics
           </h3>
           
@@ -1002,8 +1042,19 @@ const ResultDisplay = ({ result }) => {
       
       {/* Source Content Modal */}
       <SourceModal />
-    </div>
+    </motion.div>
   );
+
+  if (isFullScreen) {
+    return (
+      <div className="fixed inset-0 z-[100] flex items-center justify-center bg-black/40 backdrop-blur-lg animate-fade-in p-4">
+        <div className="w-full h-full bg-white rounded-lg shadow-xl overflow-auto">
+          {mainContent}
+        </div>
+      </div>
+    );
+  }
+  return mainContent;
 };
 
 export default ResultDisplay;
