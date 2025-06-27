@@ -78,6 +78,6 @@ logs/
 # Database files
 *.sqlite3
 *.db
-
+*.pkl
 # Jupyter Notebook
 .ipynb_checkpoints

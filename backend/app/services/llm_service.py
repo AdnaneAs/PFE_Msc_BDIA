@@ -196,7 +196,7 @@ def query_ollama_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
         "stream": False,
         # Optimized parameters for faster, more focused responses
         "options": {
-            "temperature": 0.0,     # Deterministic responses for consistency
+            "temperature": 0.7,     # Deterministic responses for consistency
             "top_p": 0.8,           # Reduced for more focused responses
             "num_predict": 300,     # Reduced from 512 for faster generation
             "num_ctx": 1536,        # Reduced context window for speed
@@ -403,8 +403,7 @@ def query_gemini_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
                 logger.info("Using Gemini API key from persistent settings")
         except Exception as e:
             logger.warning(f"Could not load API key from settings: {e}")
-    
-    # Update status
+      # Update status
     llm_status["is_processing"] = True
     llm_status["last_model_used"] = f"gemini/{model}"
     llm_status["last_query_time"] = time.time()
@@ -415,8 +414,7 @@ def query_gemini_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
     
     try:
         try:
-            from google import genai
-            from google.genai import types
+            import google.generativeai as genai
         except ImportError:
             logger.error("Google Generative AI package not installed")
             llm_status["is_processing"] = False
@@ -428,7 +426,7 @@ def query_gemini_llm(prompt: str, model_config: Dict[str, Any] = None) -> tuple:
             return "Gemini API key is not configured. Please provide an API key to use Gemini models.", f"gemini/{model} (no API key)"
         
         # Configure the Gemini API
-        client = genai.Client(api_key=api_key)
+        genai.configure(api_key=api_key)
         
         logger.info("Sending request to Gemini API")
         start_time = time.time()
@@ -439,14 +437,18 @@ Include citation numbers [1], [2], etc. when referencing specific information.
 If the information isn't in the passages, state that you don't have enough information.
 Be accurate, clear, and concise in your responses."""
         
+        # Create the model with system instruction
+        model_instance = genai.GenerativeModel(
+            model_name=model,
+            system_instruction=system_instruction
+        )
+        
         # Generate content with the specified configuration
-        response = client.models.generate_content(
-            model=model,
-            contents=prompt,
-            config=types.GenerateContentConfig(
+        response = model_instance.generate_content(
+            prompt,
+            generation_config=genai.types.GenerationConfig(
                 max_output_tokens=60000,
-                temperature=0.5,
-                system_instruction=system_instruction
+                temperature=0.7
             )
         )
         
@@ -1014,3 +1016,51 @@ def get_available_models() -> List[Dict[str, Any]]:
     })
     
     return models
+
+async def get_llm_response(prompt: str, system_prompt: str = None, provider: str = "ollama", 
+                          model: str = None, temperature: float = 0.7, max_tokens: int = 2000) -> str:
+    """
+    Simple wrapper function for agents to get LLM responses
+    
+    Args:
+        prompt: The main prompt
+        system_prompt: Optional system prompt (will be prepended)
+        provider: LLM provider ("ollama", "openai", "gemini", "huggingface")
+        model: Model name
+        temperature: Sampling temperature
+        max_tokens: Maximum tokens to generate
+        
+    Returns:
+        str: LLM response text
+    """
+    # Combine system prompt and user prompt
+    full_prompt = prompt
+    if system_prompt:
+        full_prompt = f"{system_prompt}\n\n{prompt}"
+    
+    # Create model config
+    model_config = {
+        "temperature": temperature,
+        "max_tokens": max_tokens
+    }
+    if model:
+        model_config["model"] = model
+    
+    try:
+        # Route to appropriate provider
+        if provider == "ollama":
+            response, _ = query_ollama_llm(full_prompt, model_config)
+        elif provider == "openai":
+            response, _ = query_openai_llm(full_prompt, model_config)
+        elif provider == "gemini":
+            response, _ = query_gemini_llm(full_prompt, model_config)
+        elif provider == "huggingface":
+            response, _ = query_huggingface_llm(full_prompt, model_config)
+        else:
+            # Default to ollama
+            response, _ = query_ollama_llm(full_prompt, model_config)
+        
+        return response
+    except Exception as e:
+        logger.error(f"get_llm_response failed: {str(e)}")
+        raise

@@ -5,9 +5,11 @@ import {
   submitDecomposedQuery, 
   submitMultimodalQuery,
   getLLMStatus, 
-  getSystemConfiguration, 
+  getSystemConfiguration,
+  getFastSystemConfigurationOptimized,
   getRerankerConfig 
 } from '../services/api';
+import configCache from '../services/configCache';
 
 const QueryInput = ({ onQueryResult, configChangeCounter }) => {
   const [question, setQuestion] = useState('');
@@ -43,7 +45,24 @@ const QueryInput = ({ onQueryResult, configChangeCounter }) => {
   // Function to refresh configuration
   const refreshConfiguration = async () => {
     try {
-      const config = await getSystemConfiguration();
+      // Try to get from cache first for instant loading
+      const cachedData = configCache.get();
+      if (cachedData && cachedData.config) {
+        const config = cachedData.config;
+        setCurrentConfig(config);
+        
+        // Update states with cached configuration
+        if (config.search_configuration) {
+          setSearchStrategy(config.search_configuration.search_strategy.current);
+          setMaxSources(config.search_configuration.max_sources.current);
+          setUseDecomposition(config.search_configuration.query_decomposition.enabled);
+        }
+        
+        console.log("Configuration loaded from cache in QueryInput");
+      }
+      
+      // Always fetch fresh data in background using fast endpoint first
+      const config = await getFastSystemConfigurationOptimized();
       setCurrentConfig(config);
       
       // Update states with current configuration

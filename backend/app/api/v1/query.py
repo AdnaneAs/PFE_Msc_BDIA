@@ -785,14 +785,20 @@ async def multimodal_query(request: MultimodalQueryRequest):
         
         # Complete metrics tracking
         final_metrics = metrics.complete()
-        
-        # Calculate average and top relevance
+          # Calculate average and top relevance
         all_relevance_scores = [
             metadata.get("relevance_score", 0.0) 
             for metadata in multimodal_results["metadatas"]
         ]
+        
+        # DEBUG: Check what scores we got from the vector service
+        print(f"🔧 API DEBUG: Raw scores from vector service: {all_relevance_scores[:3]}")
+        print(f"🔧 API DEBUG: First metadata sample: {multimodal_results['metadatas'][0] if multimodal_results['metadatas'] else 'None'}")
+        
         avg_relevance = sum(all_relevance_scores) / len(all_relevance_scores) if all_relevance_scores else None
         top_relevance = max(all_relevance_scores) if all_relevance_scores else None
+        
+        print(f"🔧 API DEBUG: Calculated avg_relevance: {avg_relevance}, top_relevance: {top_relevance}")
         
         # Check if decomposition was applied
         decomposition_applied = request.use_decomposition and 'is_complex' in locals() and is_complex

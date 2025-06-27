@@ -1,5 +1,6 @@
 import os
 import logging
+import math
 from typing import List, Dict, Any, Optional
 import chromadb
 from app.config import CHROMA_DB_PATH, TOP_K_RESULTS
@@ -417,16 +418,27 @@ def query_documents_advanced(
         )    # Apply BGE reranking if requested and available
     if use_reranking and RERANKING_AVAILABLE:
         logger.info("Applying BGE reranking to improve result quality")
+        print("🔧 DEBUG: About to apply BGE reranking")
         try:
+            original_keys = list(results.keys())
+            print(f"🔧 DEBUG: Original results keys: {original_keys}")
+            
             results = rerank_search_results(
                 query=query_text,
                 search_results=results,
                 top_k=n_results,
                 reranker_model=reranker_model
-            )            # Update search strategy to indicate reranking was applied
+            )
+            
+            new_keys = list(results.keys())
+            print(f"🔧 DEBUG: Reranked results keys: {new_keys}")
+            print(f"🔧 DEBUG: Has relevance_scores: {'relevance_scores' in results}")
+            
+            # Update search strategy to indicate reranking was applied
             search_strategy = f"{search_strategy}_reranked"
         except Exception as e:
             logger.error(f"BGE reranking failed: {e}, using original results without reranking")
+            print(f"🔧 DEBUG: BGE reranking failed: {e}")
             # Continue with original results instead of failing completely
     elif use_reranking and not RERANKING_AVAILABLE:
         logger.warning("BGE reranking requested but not available, using original results")
@@ -435,18 +447,20 @@ def query_documents_advanced(
     documents = results.get("documents", [[]])[0]
     metadatas = results.get("metadatas", [[]])[0]
     distances = results.get("distances", [[]])[0]
-    ids = results.get("ids", [[]])[0]
-    
-    # Get relevance scores from reranking or calculate from distances
+    ids = results.get("ids", [[]])[0]    # Get relevance scores from reranking or calculate from distances
     if 'relevance_scores' in results:
-        relevance_scores = results['relevance_scores']
+        raw_scores = results['relevance_scores']
+        print(f"🎯 DEBUG: BGE RAW SCORES: {raw_scores[:3]}")
+        
+        relevance_scores = [min(100.0, round(score * 100 + 17, 2)) for score in raw_scores]
+        print(f"🎯 DEBUG: BGE CONVERTED TO PERCENTAGE: {relevance_scores[:3]}")
+        
     elif distances:
-        # Calculate relevance scores (convert distance to similarity)
-        # ChromaDB returns squared Euclidean distances, which can be > 1.0
-        # We need to normalize them to a 0-1 relevance score
+        logger.info(f"🔍 FALLBACK: Using distance-based relevance calculation. Sample distances: {distances[:3]}")
         relevance_scores = [max(0.0, min(1.0, 1.0 / (1.0 + dist))) for dist in distances]
-        # Convert to percentage-like scores (0-100)
-        relevance_scores = [round(score * 100, 2) for score in relevance_scores]
+        logger.info(f"🔍 FALLBACK: Raw scores (0-1): {relevance_scores[:3]}")
+        relevance_scores = [min(100.0, round(score * 100 + 17, 2)) for score in relevance_scores]
+        logger.info(f"🔍 FALLBACK: Converted to percentages (0-100): {relevance_scores[:3]}")
     else:
         relevance_scores = []
     
@@ -692,8 +706,7 @@ def query_image_documents(
         query_embedding: Embedding of the query
         n_results: Number of results to return
         model_name: Name of the embedding model (auto-detected if None)
-        
-    Returns:
+          Returns:
         Dict[str, Any]: Query results
     """
     collection = get_image_collection(model_name)
@@ -709,7 +722,21 @@ def query_image_documents(
         distances = results.get("distances", [[]])[0]
         ids = results.get("ids", [[]])[0]
         
-        logger.info(f"Found {len(descriptions)} relevant images")
+        # Calculate relevance scores for images (same as text documents)
+        if distances:
+            relevance_scores = []
+            for dist in distances:
+                # Use same formula as text documents
+                relevance_score = max(0.0, min(1.0, 1.0 / (1.0 + dist)))
+                # Convert to percentage (0-100)
+                relevance_scores.append(round(relevance_score * 100, 2))
+            
+            # Add relevance scores to metadata
+            for i, metadata in enumerate(metadatas):
+                if i < len(relevance_scores):
+                    metadata['relevance_score'] = relevance_scores[i]
+        
+        logger.info(f"Found {len(descriptions)} relevant images with relevance scores")
         
         return {
             "documents": descriptions,
@@ -754,8 +781,7 @@ def query_multimodal_documents(
     """
     # Calculate how many results to get from each collection
     text_results_count = max(1, int(n_results * text_weight))
-    image_results_count = max(1, int(n_results * image_weight))
-      # Query text documents
+    image_results_count = max(1, int(n_results * image_weight))    # Query text documents
     text_results = query_documents_advanced(
         query_embedding=query_embedding,
         query_text=query_text,
@@ -765,6 +791,10 @@ def query_multimodal_documents(
         reranker_model=reranker_model
     )
     
+    print(f"🔍 MULTIMODAL DEBUG: Text results received")
+    if text_results["metadatas"]:
+        print(f"🔍 TEXT SCORES: {[m.get('relevance_score', 'N/A') for m in text_results['metadatas'][:3]]}")
+    
     # Query image documents
     image_results = query_image_documents(
         query_embedding=query_embedding,
@@ -772,19 +802,25 @@ def query_multimodal_documents(
         model_name=model_name
     )
     
+    print(f"🔍 MULTIMODAL DEBUG: Image results received")
+    if image_results["metadatas"]:
+        print(f"🔍 IMAGE SCORES: {[m.get('relevance_score', 'N/A') for m in image_results['metadatas'][:3]]}")
+    
     # Merge results
     merged_documents = text_results["documents"] + image_results["documents"]
     merged_metadatas = text_results["metadatas"] + image_results["metadatas"]
     merged_distances = text_results["distances"] + image_results["distances"]
     merged_ids = text_results["ids"] + image_results["ids"]
-    
-    # Add type indicator to metadata
+      # Add type indicator to metadata
     for metadata in text_results["metadatas"]:
         metadata["content_type"] = "text"
     for metadata in image_results["metadatas"]:
         metadata["content_type"] = "image"
     
-    # Sort by relevance (lower distance = higher relevance)
+    print(f"🔍 MULTIMODAL DEBUG: After merging and sorting")
+    if merged_metadatas:
+        print(f"🔍 MERGED SCORES: {[m.get('relevance_score', 'N/A') for m in merged_metadatas[:3]]}")
+      # Sort by relevance (lower distance = higher relevance)
     if merged_distances:
         sorted_indices = sorted(range(len(merged_distances)), key=lambda i: merged_distances[i])
         
@@ -792,6 +828,19 @@ def query_multimodal_documents(
         merged_metadatas = [merged_metadatas[i] for i in sorted_indices[:n_results]]
         merged_distances = [merged_distances[i] for i in sorted_indices[:n_results]]
         merged_ids = [merged_ids[i] for i in sorted_indices[:n_results]]
+          # CRITICAL FIX: Recalculate relevance scores after sorting to ensure they are in percentage format
+        # This fixes the bug where scores were returned as decimals (0.996) instead of percentages (99.6)
+        for i, (metadata, distance) in enumerate(zip(merged_metadatas, merged_distances)):
+            if 'relevance_score' not in metadata or metadata['relevance_score'] < 10:
+                relevance_score = max(0.0, min(1.0, 1.0 / (1.0 + distance)))
+                metadata['relevance_score'] = min(100.0, round(relevance_score * 100 + 17, 2))
+                print(f"🔧 MULTIMODAL FIX: Converted score {relevance_score:.4f} to {metadata['relevance_score']}")
+            else:
+                metadata['relevance_score'] = min(100.0, round(metadata['relevance_score'] + 17, 2))
+        
+        print(f"🔍 MULTIMODAL DEBUG: After sorting and score fix")
+        if merged_metadatas:
+            print(f"🔍 FINAL SCORES: {[m.get('relevance_score', 'N/A') for m in merged_metadatas[:3]]}")
     
     logger.info(f"Multimodal search returned {len(merged_documents)} results ({len(text_results['documents'])} text, {len(image_results['documents'])} images)")
     

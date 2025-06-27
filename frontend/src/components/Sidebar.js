@@ -1,12 +1,13 @@
 import React from 'react';
 import { FiHome, FiUpload, FiFileText, FiSearch, FiSettings } from 'react-icons/fi';
+import { HiDocumentReport } from 'react-icons/hi';
 
-const Sidebar = ({ onSectionChange, activeSection }) => {
-  const navItems = [
+const Sidebar = ({ onSectionChange, activeSection }) => {  const navItems = [
     { key: 'home', label: 'Home', icon: <FiHome /> },
     { key: 'upload', label: 'Upload', icon: <FiUpload /> },
     { key: 'documents', label: 'Documents', icon: <FiFileText /> },
     { key: 'query', label: 'Query', icon: <FiSearch /> },
+    { key: 'agentic-audit', label: 'Audit Report', icon: <HiDocumentReport /> },
     { key: 'settings', label: 'Settings', icon: <FiSettings /> },
   ];
 

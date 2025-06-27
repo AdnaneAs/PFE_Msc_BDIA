@@ -896,24 +896,32 @@ const ResultDisplay = ({ result, isFullScreen = false, onCloseFullScreen, onRequ
                     <div>
                       <div className="flex justify-between text-xs mb-1">
                         <span className="text-gray-600">Average:</span>
-                        <span className="font-medium">{Math.abs(average_relevance).toFixed(3)}</span>
+                        <span className="font-medium">{Math.abs(average_relevance).toFixed(1)}%</span>
                       </div>
                       <div className="w-full bg-gray-200 rounded-full h-2">
                         <div 
-                          className="bg-gradient-to-r from-orange-400 to-red-500 h-2 rounded-full"
-                          style={{ width: `${Math.min(100, Math.abs(average_relevance) * 100)}%` }}
+                          className={`h-2 rounded-full ${
+                            Math.abs(average_relevance) >= 70 ? 'bg-gradient-to-r from-green-400 to-green-600' :
+                            Math.abs(average_relevance) >= 50 ? 'bg-gradient-to-r from-yellow-400 to-orange-500' :
+                            'bg-gradient-to-r from-orange-400 to-red-500'
+                          }`}
+                          style={{ width: `${Math.min(100, Math.abs(average_relevance))}%` }}
                         ></div>
                       </div>
                     </div>
                     <div>
                       <div className="flex justify-between text-xs mb-1">
                         <span className="text-gray-600">Best match:</span>
-                        <span className="font-medium">{Math.abs(top_relevance).toFixed(3)}</span>
+                        <span className="font-medium">{Math.abs(top_relevance).toFixed(1)}%</span>
                       </div>
                       <div className="w-full bg-gray-200 rounded-full h-2">
                         <div 
-                          className="bg-gradient-to-r from-green-400 to-green-600 h-2 rounded-full"
-                          style={{ width: `${Math.min(100, Math.abs(top_relevance) * 100)}%` }}
+                          className={`h-2 rounded-full ${
+                            Math.abs(top_relevance) >= 70 ? 'bg-gradient-to-r from-green-400 to-green-600' :
+                            Math.abs(top_relevance) >= 50 ? 'bg-gradient-to-r from-yellow-400 to-orange-500' :
+                            'bg-gradient-to-r from-orange-400 to-red-500'
+                          }`}
+                          style={{ width: `${Math.min(100, Math.abs(top_relevance))}%` }}
                         ></div>
                       </div>
                     </div>

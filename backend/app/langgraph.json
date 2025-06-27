@@ -1,0 +1,8 @@
+{
+  "dependencies": [".", "studio-requirements.txt"],
+  "graphs": {
+    "audit_workflow": "./agents/graph.py:graph"
+  },
+  "env": "../.env",
+  "python_version": "3.10"
+}

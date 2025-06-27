@@ -9,6 +9,7 @@ from app.services.embedding_service import (
 )
 from app.services.settings_service import (
     load_settings, 
+    load_settings_fast,
     update_setting, 
     get_setting,
     get_available_models_by_provider,
@@ -131,6 +132,117 @@ async def get_system_configuration() -> Dict[str, Any]:
         raise HTTPException(
             status_code=500,
             detail=f"Failed to get system configuration: {str(e)}"
+        )
+
+@router.get(
+    "/fast",
+    summary="Get fast system configuration",
+    response_description="System configuration with cached data only (no blocking operations)"
+)
+async def get_fast_system_configuration() -> Dict[str, Any]:
+    """
+    Get system configuration using only cached data to avoid blocking operations
+    
+    Returns:
+        Dict containing configuration sections with cached/fallback data
+    """
+    try:
+        # Load user settings (fast - no validation/blocking calls)
+        user_settings = load_settings_fast()
+        
+        # Get current embedding model info (cached)
+        current_embedding_model = get_current_model_info()
+        available_embedding_models = get_available_models()
+        
+        # Get LLM configuration from settings
+        current_llm_provider = user_settings.get("llm_provider", "ollama")
+        current_llm_model = user_settings.get("llm_model", "llama3.2:latest")
+        
+        # Use only cached models or fallback data (no network calls)
+        available_llm_providers = {
+            "ollama": {
+                "name": "ollama",
+                "display_name": "Ollama (Local)",
+                "description": "Local LLM inference with Ollama",
+                "status": "unknown",  # Will be updated by separate endpoint
+                "models": []  # Will be populated by separate model loading
+            },
+            "openai": {
+                "name": "openai",
+                "display_name": "OpenAI",
+                "description": "OpenAI GPT models (API key required)",
+                "status": "available" if user_settings.get("api_key_openai") else "unavailable",
+                "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "gpt-3.5-turbo-16k"]
+            },
+            "gemini": {
+                "name": "gemini",
+                "display_name": "Google Gemini",
+                "description": "Google Gemini models (API key required)",
+                "status": "available" if user_settings.get("api_key_gemini") else "unavailable",
+                "models": ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro", "gemini-1.0-pro"]
+            },
+            "huggingface": {
+                "name": "huggingface",
+                "display_name": "Hugging Face",
+                "description": "Hugging Face transformers (API key required)",
+                "status": "available" if user_settings.get("api_key_huggingface") else "unavailable",
+                "models": ["microsoft/DialoGPT-medium", "meta-llama/Llama-2-7b-chat-hf"]
+            }
+        }
+
+        configuration = {
+            "model_selection": {
+                "llm": {
+                    "current_provider": current_llm_provider,
+                    "current_model": current_llm_model,
+                    "available_providers": available_llm_providers
+                },
+                "embedding": {
+                    "current_model": current_embedding_model,
+                    "available_models": available_embedding_models
+                }
+            },
+            "search_configuration": {
+                "query_decomposition": {
+                    "enabled": user_settings.get("query_decomposition_enabled", False),
+                    "description": "Automatically breaks down complex questions into sub-queries for more comprehensive answers. Best for multi-part questions or when you need detailed analysis."
+                },
+                "search_strategy": {
+                    "current": user_settings.get("search_strategy", "hybrid"),
+                    "options": {
+                        "hybrid": {
+                            "name": "hybrid",
+                            "display_name": "🔍 Hybrid Search (Recommended)",
+                            "description": "Combines semantic understanding with keyword matching for best results"
+                        },
+                        "semantic": {
+                            "name": "semantic", 
+                            "display_name": "🧠 Semantic Search",
+                            "description": "Uses AI to understand meaning and context"
+                        },
+                        "keyword": {
+                            "name": "keyword",
+                            "display_name": "🔎 Keyword Search", 
+                            "description": "Traditional text matching search"
+                        }
+                    }
+                },
+                "max_sources": {
+                    "current": user_settings.get("max_sources", 5),
+                    "options": [3, 5, 10, 15, 20],
+                    "description": "Number of relevant documents to use for generating the answer"
+                }
+            },
+            "status": "success"
+        }
+        
+        return configuration
+        
+    except Exception as e:
+        logger.error(f"Error getting fast system configuration: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get fast system configuration: {str(e)}"
         )
 
 @router.post(
@@ -969,3 +1081,179 @@ async def update_vlm_model_endpoint(request: Dict[str, str]) -> Dict[str, Any]:
             status_code=500,
             detail=f"Failed to update VLM model: {str(e)}"
         )
+
+@router.get(
+    "/minimal",
+    summary="Get minimal system configuration",
+    response_description="Minimal configuration for instant loading"
+)
+async def get_minimal_system_configuration() -> Dict[str, Any]:
+    """
+    Get minimal system configuration with only essential data for instant loading
+    
+    Returns:
+        Dict containing minimal configuration for fast UI response
+    """
+    try:
+        # Load user settings only (fastest operation, no validation)
+        user_settings = load_settings_fast()
+        
+        # Get basic configuration without any model loading or checks
+        current_llm_provider = user_settings.get("llm_provider", "ollama")
+        current_llm_model = user_settings.get("llm_model", "llama3.2:latest")
+        
+        # Minimal provider structure for instant UI
+        available_llm_providers = {
+            "ollama": {
+                "name": "ollama",
+                "display_name": "Ollama (Local)",
+                "description": "Local LLM inference with Ollama",
+                "status": "loading",
+                "models": []
+            },
+            "openai": {
+                "name": "openai",
+                "display_name": "OpenAI",
+                "description": "OpenAI GPT models (API key required)",
+                "status": "available" if user_settings.get("api_key_openai") else "unavailable",
+                "models": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]
+            },
+            "gemini": {
+                "name": "gemini",
+                "display_name": "Google Gemini",
+                "description": "Google Gemini models (API key required)",
+                "status": "available" if user_settings.get("api_key_gemini") else "unavailable",
+                "models": ["gemini-2.0-flash", "gemini-1.5-flash"]
+            },
+            "huggingface": {
+                "name": "huggingface",
+                "display_name": "Hugging Face",
+                "description": "Hugging Face transformers (API key required)",
+                "status": "available" if user_settings.get("api_key_huggingface") else "unavailable",
+                "models": ["microsoft/DialoGPT-medium"]
+            }
+        }
+
+        # Minimal embedding configuration
+        current_embedding_model = {
+            "name": user_settings.get("embedding_model", "all-MiniLM-L6-v2"),
+            "display_name": "Current Embedding Model",
+            "description": "Loading...",
+            "is_loaded": False
+        }
+
+        configuration = {
+            "model_selection": {
+                "llm": {
+                    "current_provider": current_llm_provider,
+                    "current_model": current_llm_model,
+                    "available_providers": available_llm_providers
+                },
+                "embedding": {
+                    "current_model": current_embedding_model,
+                    "available_models": {}  # Will be loaded separately
+                }
+            },
+            "search_configuration": {
+                "query_decomposition": {
+                    "enabled": user_settings.get("query_decomposition_enabled", False),
+                    "description": "Automatically breaks down complex questions for better results"
+                },
+                "search_strategy": {
+                    "current": user_settings.get("search_strategy", "hybrid"),
+                    "options": {
+                        "hybrid": {
+                            "name": "hybrid",
+                            "display_name": "🔍 Hybrid Search (Recommended)",
+                            "description": "Combines semantic understanding with keyword matching"
+                        }
+                    }
+                },
+                "max_sources": {
+                    "current": user_settings.get("max_sources", 5),
+                    "options": [3, 5, 10, 15, 20],
+                    "description": "Number of relevant documents to use for generating the answer"
+                }
+            },
+            "status": "minimal"
+        }
+        
+        return configuration
+        
+    except Exception as e:
+        logger.error(f"Error getting minimal system configuration: {str(e)}")
+        raise HTTPException(
+            status_code=500,
+            detail=f"Failed to get minimal system configuration: {str(e)}"
+        )
+
+@router.get(
+    "/instant",
+    summary="Get instant system configuration",
+    response_description="Static configuration for instant UI loading (no file operations)"
+)
+async def get_instant_system_configuration() -> Dict[str, Any]:
+    """
+    Get instant system configuration with hardcoded defaults for testing
+    This endpoint has no file operations or external calls for maximum speed
+    
+    Returns:
+        Dict containing static configuration for instant loading
+    """
+    configuration = {
+        "model_selection": {
+            "llm": {
+                "current_provider": "ollama",
+                "current_model": "llama3.2:latest",
+                "available_providers": {
+                    "ollama": {
+                        "name": "ollama",
+                        "display_name": "Ollama (Local)",
+                        "description": "Local LLM inference with Ollama",
+                        "status": "loading",
+                        "models": []
+                    },
+                    "openai": {
+                        "name": "openai",
+                        "display_name": "OpenAI",
+                        "description": "OpenAI GPT models (API key required)",
+                        "status": "unavailable",
+                        "models": ["gpt-4o", "gpt-4o-mini", "gpt-3.5-turbo"]
+                    }
+                }
+            },
+            "embedding": {
+                "current_model": {
+                    "name": "all-MiniLM-L6-v2",
+                    "display_name": "Default Embedding Model",
+                    "description": "Loading...",
+                    "is_loaded": False
+                },
+                "available_models": {}
+            }
+        },
+        "search_configuration": {
+            "query_decomposition": {
+                "enabled": False,
+                "description": "Automatically breaks down complex questions"
+            },
+            "search_strategy": {
+                "current": "hybrid",
+                "options": {
+                    "hybrid": {
+                        "name": "hybrid",
+                        "display_name": "🔍 Hybrid Search (Recommended)",
+                        "description": "Combines semantic understanding with keyword matching"
+                    }
+                }
+            },
+            "max_sources": {
+                "current": 5,
+                "options": [3, 5, 10, 15, 20],
+                "description": "Number of relevant documents to use"
+            }
+        },
+        "status": "instant"
+    }
+    
+    return configuration

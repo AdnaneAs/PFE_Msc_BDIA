@@ -276,7 +276,7 @@ const DocumentList = ({ refreshTrigger, active }) => {
   };
 
   return (
-    <div className="bg-white shadow-md rounded-lg p-6 mb-6">
+    <div className="bg-white shadow-md rounded-lg p-6 mb-6 min-h-[70vh] flex flex-col justify-start" style={{minHeight: '70vh'}}>
       <div className="flex flex-col sm:flex-row sm:justify-between sm:items-center mb-6 space-y-3 sm:space-y-0">
         <div>
           <h2 className="text-xl font-semibold text-gray-800">Documents</h2>
@@ -547,8 +547,8 @@ const DocumentList = ({ refreshTrigger, active }) => {
       {/* Document list */}
       {!loading && filteredAndSortedDocuments.length > 0 && (
         <>
-          <div className="overflow-hidden border border-gray-200 rounded-lg">
-            <div className="overflow-x-auto max-h-96 overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 hover:scrollbar-thumb-gray-400">
+          <div className="overflow-hidden border border-gray-200 rounded-lg" style={{minHeight: '50vh'}}>
+            <div className="overflow-x-auto max-h-[60vh] min-h-[40vh] overflow-y-auto scrollbar-thin scrollbar-thumb-gray-300 scrollbar-track-gray-100 hover:scrollbar-thumb-gray-400">
               <table className="min-w-full divide-y divide-gray-200">
                 <thead className="bg-gray-50 sticky top-0 z-10">
                   <tr>

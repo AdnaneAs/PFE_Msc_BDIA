@@ -199,3 +199,16 @@ async def delete_document(doc_id: int) -> bool:
     except Exception as e:
         logger.error(f"Error deleting document: {str(e)}")
         return False
+
+def check_db_health() -> bool:
+    """Check database health for health endpoint"""
+    try:
+        import sqlite3
+        conn = sqlite3.connect(str(DB_PATH))
+        cursor = conn.cursor()
+        cursor.execute("SELECT 1")
+        conn.close()
+        return True
+    except Exception as e:
+        logger.error(f"Database health check failed: {str(e)}")
+        return False

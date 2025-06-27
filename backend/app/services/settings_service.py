@@ -84,7 +84,7 @@ PROVIDER_MODEL_PATTERNS = {
         "models": ["gpt-4o", "gpt-4o-mini", "gpt-4-turbo", "gpt-4", "gpt-3.5-turbo", "gpt-3.5-turbo-16k"],
         "patterns": [r"^gpt-.*"]
     },    "gemini": {
-        "models": ["gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro", "gemini-1.0-pro"],
+        "models": ["gemini-2.5-flash","gemini-2.0-flash", "gemini-1.5-flash", "gemini-1.5-pro", "gemini-pro", "gemini-1.0-pro"],
         "patterns": [r"^gemini-.*"]
     },
     "huggingface": {
@@ -152,6 +152,37 @@ def load_settings() -> Dict[str, Any]:
             
     except Exception as e:
         logger.error(f"Error loading settings: {str(e)}")
+        return DEFAULT_SETTINGS.copy()
+
+def load_settings_fast() -> Dict[str, Any]:
+    """
+    Load user settings from file without model validation for fast response
+    Used by fast/minimal config endpoints to avoid blocking operations
+    
+    Returns:
+        Dict containing user settings
+    """
+    try:
+        # Ensure the data directory exists
+        SETTINGS_FILE.parent.mkdir(parents=True, exist_ok=True)
+        
+        if SETTINGS_FILE.exists():
+            with open(SETTINGS_FILE, 'r', encoding='utf-8') as f:
+                settings = json.load(f)
+                
+            # Merge with defaults to handle new settings
+            merged_settings = {**DEFAULT_SETTINGS, **settings}
+            
+            # Skip model validation for fast loading
+            logger.debug(f"Loaded user settings from {SETTINGS_FILE} (fast mode)")
+            return merged_settings
+        else:
+            # Return defaults without creating file in fast mode
+            logger.debug(f"Using default settings (fast mode)")
+            return DEFAULT_SETTINGS.copy()
+            
+    except Exception as e:
+        logger.error(f"Error loading settings (fast mode): {str(e)}")
         return DEFAULT_SETTINGS.copy()
 
 def save_settings(settings: Dict[str, Any]) -> bool:
@@ -284,10 +315,15 @@ def get_ollama_models(force_refresh: bool = False) -> List[str]:
         return _ollama_models_cache.copy()
     
     try:
-        response = requests.get("http://localhost:11434/api/tags", timeout=5)
+        # Reduced timeout for faster response when Ollama is not available
+        response = requests.get("http://localhost:11434/api/tags", timeout=2)
         if response.status_code == 200:
             models_data = response.json()
             models = [model["name"] for model in models_data.get("models", [])]
+            
+            # Limit models returned for faster UI loading (most recent 20)
+            if len(models) > 20:
+                models = models[:20]
             
             # Update cache
             _ollama_models_cache = models
@@ -301,6 +337,9 @@ def get_ollama_models(force_refresh: bool = False) -> List[str]:
             return _ollama_models_cache.copy() if _ollama_models_cache else []
     except requests.exceptions.ConnectionError:
         logger.warning("Could not connect to Ollama. Using cached data if available.")
+        return _ollama_models_cache.copy() if _ollama_models_cache else []
+    except requests.exceptions.Timeout:
+        logger.warning("Ollama API timeout. Using cached data if available.")
         return _ollama_models_cache.copy() if _ollama_models_cache else []
     except Exception as e:
         logger.error(f"Error fetching Ollama models: {str(e)}")
@@ -381,12 +420,16 @@ def get_available_models_by_provider(force_refresh: bool = False) -> Dict[str, L
     
     models_by_provider = {}
     
-    # Ollama - get from local installation (uses its own cache)
-    ollama_models = get_ollama_models(force_refresh)
-    if ollama_models:
-        models_by_provider["ollama"] = ollama_models
-    else:
-        # Fallback to common models if Ollama not available
+    # Try to get Ollama models with timeout protection
+    try:
+        ollama_models = get_ollama_models(force_refresh)
+        if ollama_models:
+            models_by_provider["ollama"] = ollama_models
+        else:
+            # Fallback to common models if Ollama not available
+            models_by_provider["ollama"] = ["llama3.2:latest", "llama3.1:latest", "mistral:latest"]
+    except Exception as e:
+        logger.warning(f"Failed to get Ollama models, using fallback: {e}")
         models_by_provider["ollama"] = ["llama3.2:latest", "llama3.1:latest", "mistral:latest"]
     
     # OpenAI - static list

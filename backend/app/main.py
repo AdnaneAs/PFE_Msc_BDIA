@@ -1,13 +1,16 @@
 from fastapi import FastAPI
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import JSONResponse
 import logging
 import sys
 import nest_asyncio
+import asyncio
 
 # Apply nest_asyncio to allow nested event loops
 nest_asyncio.apply()
 
 from app.api.v1 import documents, query, models, config
+from app.api.v1 import agentic_audit
 from app.database.db_setup import init_db
 
 # Configure logging
@@ -28,6 +31,27 @@ app = FastAPI(
     version="0.2.0",  # Updated version number
 )
 
+# Add concurrency control middleware
+@app.middleware("http")
+async def limit_concurrency(request, call_next):
+    """Simple concurrency control middleware"""
+    if not hasattr(app.state, "current_requests"):
+        app.state.current_requests = 0
+        app.state.max_concurrent_requests = 50  # Adjust based on your needs
+    
+    if app.state.current_requests >= app.state.max_concurrent_requests:
+        return JSONResponse(
+            status_code=503,
+            content={"detail": "Server is busy. Please try again later."}
+        )
+    
+    app.state.current_requests += 1
+    try:
+        response = await call_next(request)
+        return response
+    finally:
+        app.state.current_requests -= 1
+
 # Configure CORS to allow requests from the React frontend
 app.add_middleware(
     CORSMiddleware,
@@ -42,7 +66,7 @@ app.add_middleware(
 @app.get("/api/hello")
 async def hello():
     logger.info("Hello endpoint called")
-    return {"message": "Backend is running!"}
+    return {"message": ""}
 
 # Health check endpoint
 @app.get("/health")
@@ -50,11 +74,51 @@ async def health_check():
     logger.info("Health check endpoint called")
     return {"status": "healthy", "message": "Backend server is running"}
 
+# Health check endpoint for Docker
+@app.get("/api/hello")
+async def health_check():
+    """Health check endpoint for Docker containers and load balancers"""
+    try:
+        # Test database connection
+        from app.database.db_setup import check_db_health
+        db_status = check_db_health()
+        
+        # Test Redis connection if available
+        redis_status = "not_configured"
+        try:
+            import os
+            if os.getenv('REDIS_URL'):
+                from app.services.redis_state_service import redis_state_manager
+                if redis_state_manager.connected:
+                    redis_status = "connected"
+                else:
+                    redis_status = "disconnected"
+        except Exception:
+            redis_status = "error"
+        
+        return {
+            "status": "healthy",
+            "message": "PFE Audit System is running",
+            "database": "connected" if db_status else "error",
+            "redis": redis_status,
+            "version": "0.2.0"
+        }
+    except Exception as e:
+        logger.error(f"Health check failed: {str(e)}")
+        return JSONResponse(
+            status_code=503,
+            content={
+                "status": "unhealthy",
+                "error": str(e)
+            }
+        )
+
 # Include API routers with correct prefixes to match frontend expectations
 app.include_router(documents.router, prefix="/api/v1/documents", tags=["documents"])
 app.include_router(query.router, prefix="/api/v1/query", tags=["query"])
 app.include_router(models.router, prefix="/api/v1/models", tags=["embedding-models"])
 app.include_router(config.router, prefix="/api/v1/config", tags=["configuration"])
+app.include_router(agentic_audit.router, prefix="/api/v1/agentic-audit", tags=["agentic-audit"])
 
 # Add models endpoint for frontend compatibility
 @app.get("/api/v1/query/models") 

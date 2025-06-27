@@ -767,6 +767,98 @@ export const getSystemConfiguration = async () => {
 };
 
 /**
+ * Get minimal system configuration
+ * @returns {Promise<Object>} Minimal configuration object for instant UI response
+ */
+export const getMinimalSystemConfiguration = async () => {
+  if (!await checkServerConnection()) {
+    throw new Error('Backend server is not available');
+  }
+
+  try {
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/minimal`);
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.error('Failed to get minimal system configuration:', error);
+    throw error;
+  }
+};
+
+/**
+ * Get minimal system configuration with optimized loading (no server check)
+ * Used for instant UI loading - assumes server is available 
+ * @returns {Promise<Object>} Minimal configuration data
+ */
+export const getMinimalSystemConfigurationFast = async () => {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 2000); // 2 second timeout
+    
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/minimal`, {
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    return await handleApiResponse(response);
+  } catch (error) {
+    // If minimal endpoint fails, return cached config or defaults
+    console.warn('Fast minimal config failed, falling back to cache:', error.message);
+    
+    // Return a minimal default configuration for instant UI
+    return {
+      model_selection: {
+        llm: {
+          current_provider: "ollama",
+          current_model: "llama3.2:latest",
+          available_providers: {
+            ollama: {
+              name: "ollama",
+              display_name: "Ollama (Local)",
+              description: "Local LLM inference with Ollama",
+              status: "unknown",
+              models: []
+            }
+          }
+        },
+        embedding: {
+          current_model: { name: "all-MiniLM-L6-v2" },
+          available_models: {}
+        }
+      },
+      search_configuration: {
+        query_decomposition: { enabled: false },
+        search_strategy: { current: "hybrid" },
+        max_sources: { current: 5 }
+      },
+      status: "fallback"
+    };
+  }
+};
+
+/**
+ * Get fast system configuration with optimized loading (no server check)
+ * Used for cached configuration loading
+ * @returns {Promise<Object>} Fast configuration data
+ */
+export const getFastSystemConfigurationOptimized = async () => {
+  try {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 3000); // 3 second timeout
+    
+    const response = await fetch(`${API_BASE_URL}/api/v1/config/fast`, {
+      signal: controller.signal
+    });
+    
+    clearTimeout(timeoutId);
+    return await handleApiResponse(response);
+  } catch (error) {
+    console.warn('Fast config endpoint failed, trying minimal:', error.message);
+    // Fallback to minimal if fast fails
+    return await getMinimalSystemConfigurationFast();
+  }
+};
+
+/**
  * Update embedding model
  * @param {string} modelName - Name of the embedding model to use
  * @returns {Promise<Object>} Update result

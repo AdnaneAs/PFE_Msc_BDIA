@@ -1,5 +1,6 @@
 fastapi==0.104.1
 uvicorn==0.24.0
+gunicorn==21.2.0
 python-dotenv==1.0.0
 requests==2.31.0
 numpy==1.26.4
@@ -7,6 +8,7 @@ huggingface_hub==0.19.4
 sentence-transformers==2.2.2
 chromadb==0.4.18
 pydantic==2.5.2
+redis>=4.0.0
 aiofiles==23.2.1
 python-multipart==0.0.6
 httpx==0.25.2
@@ -58,7 +60,7 @@ aiosqlite>=0.19.0
 
 # Added python-docx
 python-docx==1.0.1
-
+langgraph-checkpoint-sqlite
 # Added sqlalchemy
 sqlalchemy==2.0.23
 
@@ -74,3 +76,7 @@ bcrypt==4.0.1
 # Added llama-parse
 llama-parse>=0.6.24
 google-genai
+
+# Added LlamaIndex for academic-quality relevance evaluation
+llama-index-core>=0.10.0
+llama-index-embeddings-huggingface>=0.2.0

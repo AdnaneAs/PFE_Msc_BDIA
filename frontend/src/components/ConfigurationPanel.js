@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { 
   getSystemConfiguration,
+  getFastSystemConfigurationOptimized,
   updateEmbeddingModel,
   updateLLMProvider,
   updateLLMModel,
@@ -18,6 +19,8 @@ import {
   updateVLMProvider,
   updateVLMModel
 } from '../services/api';
+import configCache from '../services/configCache';
+import performanceMonitor from '../services/configPerformanceMonitor';
 import ModelSelectionSection from './config/ModelSelectionSection';
 import SearchConfigurationSection from './config/SearchConfigurationSection';
 import BGERerankerSection from './config/BGERerankerSection';
@@ -59,98 +62,137 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
     config: false,
     reranker: false,
     vlm: false,
-    apiKeys: false
-  });
+    apiKeys: false  });
   const refreshId = useRef(0);
 
-  // In-memory cache for configuration data
-  let configCache = {
-    config: null,
-    rerankerConfig: null,
-    vlmConfig: null,
-    apiKeys: null,
-    timestamp: 0
-  };
-  const CACHE_TTL = 60 * 1000; // 1 minute
-
-  // On open: show cached config instantly, then refresh in background
+  // Use the new config cache service  // On open: show cached config instantly, then refresh in background
   useEffect(() => {
     if (isOpen) {
+      performanceMonitor.startTiming('configLoad');
+      
       let usedCache = false;
-      const now = Date.now();
-      if (
-        configCache.config &&
-        configCache.timestamp &&
-        now - configCache.timestamp < CACHE_TTL
-      ) {
-        setConfig(configCache.config);
-        setRerankerConfig(configCache.rerankerConfig);
-        setVlmConfig(configCache.vlmConfig);
-        setApiKeys(configCache.apiKeys);
+      const cachedData = configCache.get();
+      
+      if (cachedData && cachedData.config) {
+        // Load from cache immediately for instant UI
+        setConfig(cachedData.config);
+        setRerankerConfig(cachedData.rerankerConfig);
+        setVlmConfig(cachedData.vlmConfig);
+        setApiKeys(cachedData.apiKeys || {
+          openai: '',
+          gemini: '',
+          huggingface: ''
+        });
         setLoading(false);
         setHasLoadedOnce(true);
         usedCache = true;
+          performanceMonitor.endTiming('configLoad', true);
+        console.log('Configuration loaded from cache');
       } else {
         setLoading(true);
       }
-      // Always refresh in background
+      
+      // Always refresh in background for up-to-date data
       const thisRefresh = ++refreshId.current;
       backgroundRefresh(thisRefresh, usedCache);
     } else {
       if (hasLoadedOnce) setLoading(false);
     }
-    // ...
   }, [isOpen]);
-
-  // Background refresh function
+  // Background refresh function with optimized loading
   const backgroundRefresh = async (thisRefresh, usedCache) => {
-    if (usedCache) setSectionLoading({ config: true, reranker: true, vlm: true, apiKeys: true });
-    try {
-      const [configData, availableModels, apiKeysStatus, rerankerConfigData, vlmConfigData] = await Promise.all([
-        getSystemConfiguration(),
-        getAvailableLLMModels(),
-        getApiKeysStatus(),
-        getRerankerConfig(),
-        getVLMConfig()
-      ]);
-      if (configData.model_selection?.llm?.available_providers && availableModels) {
-        Object.keys(availableModels).forEach(provider => {
+    if (usedCache) {
+      // Show subtle loading indicators for individual sections when using cache
+      setSectionLoading({ config: true, reranker: true, vlm: true, apiKeys: true });
+    }    try {
+      // Load optimized fast configuration for instant UI with full embedding models
+      const configData = await getFastSystemConfigurationOptimized();
+      
+      // Update config immediately if this is the current refresh
+      if (thisRefresh === refreshId.current) {
+        setConfig(configData);
+        setSectionLoading(prev => ({ ...prev, config: false }));
+        console.log('⚡ Minimal config loaded instantly');
+      }
+        // Load other data with lower priority and error resilience
+      const loadSecondaryData = async () => {
+        const [apiKeysStatus, rerankerConfigData, vlmConfigData] = await Promise.allSettled([
+          getApiKeysStatus(),
+          getRerankerConfig(), 
+          getVLMConfig()
+        ]);
+        
+        // Load available models separately (non-blocking)
+        const availableModels = await getAvailableLLMModels().catch(err => {
+          console.warn('Failed to load available models (non-blocking):', err);
+          return {}; // Return empty object to not break the flow
+        });
+        
+        return {
+          apiKeysStatus: apiKeysStatus.status === 'fulfilled' ? apiKeysStatus.value : { openai: false, gemini: false, huggingface: false },
+          rerankerConfigData: rerankerConfigData.status === 'fulfilled' ? rerankerConfigData.value : null,
+          vlmConfigData: vlmConfigData.status === 'fulfilled' ? vlmConfigData.value : { vlm: null },
+          availableModels
+        };
+      };
+      
+      const secondaryData = await loadSecondaryData();      // Merge available models into config if successful
+      if (configData.model_selection?.llm?.available_providers && secondaryData.availableModels) {
+        Object.keys(secondaryData.availableModels).forEach(provider => {
           if (configData.model_selection.llm.available_providers[provider]) {
-            configData.model_selection.llm.available_providers[provider].models = availableModels[provider];
+            configData.model_selection.llm.available_providers[provider].models = secondaryData.availableModels[provider];
             if (provider === 'ollama') {
-              const hasModels = availableModels[provider] && availableModels[provider].length > 0;
+              const hasModels = secondaryData.availableModels[provider] && secondaryData.availableModels[provider].length > 0;
               configData.model_selection.llm.available_providers[provider].status = hasModels ? 'available' : 'unavailable';
             }
           }
         });
       }
+
       if (thisRefresh === refreshId.current) {
         setConfig(configData);
-        setRerankerConfig(rerankerConfigData);
-        setVlmConfig(vlmConfigData.vlm);
+        setRerankerConfig(secondaryData.rerankerConfigData);
+        setVlmConfig(secondaryData.vlmConfigData.vlm);
         setApiKeys({
-          openai: apiKeysStatus.openai ? '***configured***' : '',
-          gemini: apiKeysStatus.gemini ? '***configured***' : '',
-          huggingface: apiKeysStatus.huggingface ? '***configured***' : ''
+          openai: secondaryData.apiKeysStatus.openai ? '***configured***' : '',
+          gemini: secondaryData.apiKeysStatus.gemini ? '***configured***' : '',
+          huggingface: secondaryData.apiKeysStatus.huggingface ? '***configured***' : ''
         });
         setHasLoadedOnce(true);
         setLoading(false);
-        setSectionLoading({ config: false, reranker: false, vlm: false, apiKeys: false });
-        configCache = {
+        setSectionLoading({ config: false, reranker: false, vlm: false, apiKeys: false });        // Update persistent cache
+        configCache.set({
           config: configData,
-          rerankerConfig: rerankerConfigData,
-          vlmConfig: vlmConfigData.vlm,
+          rerankerConfig: secondaryData.rerankerConfigData,
+          vlmConfig: secondaryData.vlmConfigData.vlm,
           apiKeys: {
-            openai: apiKeysStatus.openai ? '***configured***' : '',
-            gemini: apiKeysStatus.gemini ? '***configured***' : '',
-            huggingface: apiKeysStatus.huggingface ? '***configured***' : ''
-          },
-          timestamp: Date.now()
-        };
+            openai: secondaryData.apiKeysStatus.openai ? '***configured***' : '',
+            gemini: secondaryData.apiKeysStatus.gemini ? '***configured***' : '',
+            huggingface: secondaryData.apiKeysStatus.huggingface ? '***configured***' : ''
+          }
+        });
+          console.log('Configuration refreshed and cached');
+        
+        if (!usedCache) {
+          performanceMonitor.endTiming('configLoad', false);
+        }
+        
+        // Log performance stats periodically
+        if (Math.random() < 0.1) { // 10% chance
+          performanceMonitor.logStats();
+        }
       }
     } catch (err) {
-      setError('Failed to load configuration: ' + err.message);
-      setSectionLoading({ config: false, reranker: false, vlm: false, apiKeys: false });
+      performanceMonitor.recordError();
+      if (thisRefresh === refreshId.current) {
+        setError('Failed to load configuration: ' + err.message);
+        setSectionLoading({ config: false, reranker: false, vlm: false, apiKeys: false });
+        setLoading(false);
+        
+        if (!usedCache) {
+          performanceMonitor.endTiming('configLoad', false);
+        }
+      }
     }
   };
 
@@ -301,8 +343,7 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
 
   return (
     <div className="fixed inset-0 bg-black bg-opacity-50 z-50 flex items-center justify-center p-4">
-      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">
-        {/* Header */}
+      <div className="bg-white rounded-lg shadow-xl max-w-4xl w-full max-h-[90vh] overflow-y-auto">        {/* Header */}
         <div className="sticky top-0 bg-white border-b border-gray-200 px-6 py-4 flex justify-between items-center">
           <h2 className="text-2xl font-bold text-gray-800">System Configuration</h2>
           <button
@@ -311,9 +352,7 @@ const ConfigurationPanel = ({ isOpen, onClose, onConfigurationChange }) => {
           >
             ×
           </button>
-        </div>
-
-        {/* Content */}
+        </div>        {/* Content */}
         <div className="p-6">
           {loading ? (
             <div className="flex items-center justify-center py-8">

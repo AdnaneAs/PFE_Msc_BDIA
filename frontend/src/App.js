@@ -9,6 +9,8 @@ import ConfigurationPanel from './components/ConfigurationPanel';
 import Sidebar from './components/Sidebar';
 import LoadingScreen from './components/LoadingScreen';
 import FullScreenLayout from './components/FullScreenLayout';
+import AgenticAuditReport from './components/AgenticAuditReport';
+import configPreloader from './services/configPreloader';
 
 function App() {
   const [message, setMessage] = useState('');
@@ -19,14 +21,20 @@ function App() {
   const [showConfig, setShowConfig] = useState(false);
   const [configChangeCounter, setConfigChangeCounter] = useState(0);
   const [activeSection, setActiveSection] = useState('home');
-
   useEffect(() => {
     async function fetchData() {
       try {
         setLoading(true);
         const start = Date.now();
-        const data = await fetchHelloMessage();
-        setMessage(data.message);
+        
+        // Start configuration preloading in parallel with hello message
+        const [helloData] = await Promise.all([
+          fetchHelloMessage(),
+          configPreloader.preload() // Preload config cache
+        ]);
+        
+        setMessage(helloData.message);
+        
         // Ensure loading screen is visible for at least 1s
         const elapsed = Date.now() - start;
         if (elapsed < 1000) {
@@ -34,6 +42,8 @@ function App() {
         }
       } catch (err) {
         setError('Failed to connect to the backend server');
+        // Still try to preload config even if hello fails
+        configPreloader.preload().catch(console.warn);
       } finally {
         setLoading(false);
       }
@@ -124,8 +134,7 @@ function App() {
                   </>
                 )}
                 {activeSection === 'upload' && <FileUpload onUploadComplete={handleUploadComplete} />}
-              {activeSection === 'documents' && <DocumentList refreshTrigger={refreshDocuments} active={true} />}
-                {activeSection === 'query' && (
+              {activeSection === 'documents' && <DocumentList refreshTrigger={refreshDocuments} active={true} />}                {activeSection === 'query' && (
                   <>
                     <QueryInput 
                       onQueryResult={handleQueryResult} 
@@ -133,6 +142,13 @@ function App() {
                     />
                     <ResultDisplay result={queryResult} />
                   </>
+                )}
+                {activeSection === 'agentic-audit' && <AgenticAuditReport />}
+                {activeSection === 'settings' && (
+                  <div className="text-center py-20">
+                    <h2 className="text-2xl font-bold text-gray-700 mb-4">Settings</h2>
+                    <p className="text-gray-600">Use the settings button in the header to configure the system.</p>
+                  </div>
                 )}
               </div>
             </main>

@@ -245,8 +245,8 @@ def query_gemini_vlm(image_path: str, model: str) -> Tuple[str, str]:
                 {"mime_type": "image/jpeg", "data": image_data}
             ],
             config=types.GenerateContentConfig(
-                max_output_tokens=500,
-                temperature=0.3
+                max_output_tokens=60000,
+                temperature=0.7
             )
         )
         
